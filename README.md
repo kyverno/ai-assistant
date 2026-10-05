@@ -29,13 +29,9 @@ plan), which is the bar for graduating to a dedicated
 ### 2. Clone this repo
 
 ```bash
-git clone https://github.com/kyverno/test-ai-assistants.git
+git clone https://github.com/kyverno/ai-assistant.git
 cd test-ai-assistants
 ```
-
-(This assistant is prototyped in this sandbox repo rather than a dedicated
-one for now — see the Status note above. Install from the local checkout,
-as below, not from a git URL.)
 
 ### 3. Get a GitHub token
 
