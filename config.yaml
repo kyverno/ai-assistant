@@ -1,0 +1,299 @@
+# kyverno-assistant — Hermes profile config.
+#
+# Security-critical, hand-edited only. Enforcement is layered, each layer
+# independently verified against the real upstream servers (see
+# docs/architecture.md for how and when):
+#
+#   1. mcp_servers.<name>.env (GITHUB_TOOLSETS/GITHUB_EXCLUDE_TOOLS,
+#      SLACK_MCP_ENABLED_TOOLS below) — the upstream MCP server itself never
+#      advertises the excluded tools. Confirmed by running both real
+#      containers and diffing their actual `tools/list` response against
+#      this file's tool names.
+#   2. mcp_servers.<name>.tools.include below — Hermes' own per-tool filter,
+#      matched against the server's raw (unprefixed) tool names. Belt and
+#      suspenders with (1): even a server that ignores its exclude env var
+#      can't get an excluded tool registered into the agent's toolset.
+#   3. hooks.pre_tool_call below — a shell hook, scoped by its `matcher` to
+#      only fire on a tool name matching *merge*/*delete_repo*/*force_push*,
+#      independent of whether that tool was ever supposed to be registered.
+#      Hermes shell hooks fail OPEN by default (crash/timeout/malformed
+#      stdout → warn and allow) — wrong for a security gate, which is why
+#      `fail_closed: true` is set here to invert it. Still a backstop for a
+#      misconfiguration in (1)/(2), not the primary control — those don't
+#      depend on a subprocess succeeding.
+#
+# Do not add a tool to any layer below without re-running the verification
+# in docs/architecture.md.
+
+model:
+  default: "anthropic/claude-sonnet-4-6"
+
+mcp_servers:
+  github:
+    command: docker
+    args:
+      - run
+      - -i
+      - --rm
+      - -e
+      - GITHUB_PERSONAL_ACCESS_TOKEN
+      - -e
+      - GITHUB_LOCKDOWN_MODE
+      - -e
+      - GITHUB_TOOLSETS
+      - -e
+      - GITHUB_EXCLUDE_TOOLS
+      - ghcr.io/github/github-mcp-server
+    env:
+      GITHUB_PERSONAL_ACCESS_TOKEN: "${GITHUB_TOKEN}"
+      # Lockdown mode OFF — verified this breaks the tool outright, not a
+      # tradeoff. Live-tested against the real container: with it on, every
+      # pull_request_read call 403s for ANY non-collaborator token, because
+      # the server's own lockdown check calls GitHub's collaborator-
+      # permission endpoint on the PR's AUTHOR to decide whether to filter —
+      # and that endpoint itself requires the CALLING token to have
+      # push access on the repo ("403 Resource not accessible by personal
+      # access token"). A maintainer without push access (the exact,
+      # expected use case for a non-codeowner running this profile) can't
+      # use lockdown mode at all — it fails closed on every PR read, not
+      # just on filtering. It was already documented as "best-effort
+      # content filter, not an authorization boundary" — (1)/(2)/(3) above
+      # are the real controls — so losing it costs a heuristic, not
+      # security.
+      GITHUB_LOCKDOWN_MODE: "0"
+      # `all` on purpose: GITHUB_EXCLUDE_TOOLS below is the real gate, and
+      # naming toolset *groups* here instead risks silently missing a tool
+      # this profile needs (verified live: the default toolset omits
+      # labels/git/code_security/dependabot/secret_protection/actions
+      # entirely). Widen here, narrow with an explicit list, not vice versa.
+      GITHUB_TOOLSETS: "all"
+      # Everything NOT in mcp_servers.github.tools.include below, by name.
+      # Generated as (full `all`-toolset tool list) minus (tools.include) —
+      # keep these two lists as exact complements of each other.
+      GITHUB_EXCLUDE_TOOLS: >-
+        actions_run_trigger,assign_copilot_to_issue,assign_copilot_to_issue_with_intent,
+        create_branch,create_gist,create_or_update_file,create_pull_request,
+        create_repository,create_repository_ruleset,custom_properties_read,
+        custom_properties_write,delete_file,
+        dismiss_notification,fork_repository,get_code_quality_finding,get_commit,
+        get_gist,get_global_security_advisory,
+        get_me,get_notification_details,get_release_by_tag,get_tag,label_write,
+        list_branches,list_commits,
+        list_gists,list_global_security_advisories,list_issue_fields,
+        list_issue_types,list_issues,list_notifications,list_org_repository_security_advisories,
+        list_pull_requests,list_repository_collaborators,list_repository_security_advisories,
+        list_starred_repositories,list_tags,manage_notification_subscription,
+        manage_repository_notification_subscription,mark_all_notifications_read,
+        merge_pull_request,projects_get,projects_list,projects_write,push_files,
+        repository_ruleset_read,search_commits,search_orgs,
+        search_repositories,search_users,star_repository,sub_issue_write,
+        unstar_repository,update_gist,update_pull_request
+    # Verified live, not assumed: sent two overlapping in-flight tools/call
+    # requests over this exact container's stdio and got both back
+    # correctly id-matched, out of submission order — real concurrent
+    # handling, not a single-threaded queue. Without this, Hermes rejects a
+    # multi-call batch to a non-opted-in server outright ("a tool_call
+    # batch takes exactly one entry for a non-parallel-safe server") and
+    # every fetch serializes one round trip at a time — real, measured cost
+    # against a real queue (dozens of PRs).
+    supports_parallel_tool_calls: true
+    tools:
+      # PR queue reads — pull_request_read is one multiplexed tool (method:
+      # get/get_diff/get_status/get_files/get_commits/get_reviews/
+      # get_review_comments/get_comments/get_check_runs). search_pull_requests
+      # covers milestone:/review-requested:/label: query syntax, which is how
+      # "requested reviewer" filtering and milestone/release-urgency reasoning
+      # both work — there's no separate milestone-listing tool, and no
+      # list_pull_requests either: search_pull_requests's query syntax covers
+      # every case this profile needs, so the plain list tool isn't granted.
+      #
+      # Related-issue reads — issue_read's 'get' method returns
+      # closed_by_pull_requests (skills/pr-queue uses this for "explain PR
+      # #N"); search_issues finds related discussion. list_issues granted too
+      # — search_issues is natural-language only, unreliable for an exact
+      # label/state check (e.g. the e2e-gate).
+      #
+      # Label taxonomy + CODEOWNERS — read live, never hardcoded (see
+      # skills/kyverno-context). get_team_members/get_teams resolve
+      # team-based CODEOWNERS entries against MAINTAINER_GITHUB_LOGIN.
+      #
+      # Risk enrichment for queue reasoning — read-only.
+      #
+      # search_code — repo-wide text search: blast-radius approximation and
+      # on-demand doc discovery (AGENTS.md etc.), no code-graph MCP needed.
+      #
+      # Actions using the maintainer's own token — label, comment, review,
+      # rebase, and requesting a Copilot review if one's missing. issue_write
+      # is broader than "just labels" (can also touch state/assignees/
+      # milestone) — SOUL.md/pr-actions instruct the agent to only ever pass
+      # `labels` on it.
+      #
+      # Discussions (skills/discussions) — read + reply to contributor
+      # discussions. discussion_comment_write is multiplexed (add/reply/
+      # update/delete/mark_answer/unmark_answer) with no per-method split at
+      # this layer — granting the tool grants all six methods; the skill
+      # restricts itself to add/reply unless explicitly asked otherwise,
+      # same pattern as issue_write already being broader than "just labels".
+      include:
+        - search_pull_requests
+        - pull_request_read
+        - issue_read
+        - search_issues
+        - list_issues
+        - list_label
+        - get_label
+        - get_file_contents
+        - get_repository_tree
+        - search_code
+        - get_team_members
+        - get_teams
+        - list_releases
+        - get_latest_release
+        - list_code_scanning_alerts
+        - get_code_scanning_alert
+        - list_dependabot_alerts
+        - get_dependabot_alert
+        - list_secret_scanning_alerts
+        - get_secret_scanning_alert
+        - actions_list
+        - actions_get
+        - get_job_logs
+        - issue_write
+        - add_issue_comment
+        - update_issue_comment
+        - pull_request_review_write
+        - add_comment_to_pending_review
+        - add_reply_to_pull_request_comment
+        - update_pull_request_branch
+        - request_copilot_review
+        - list_discussion_categories
+        - list_discussions
+        - get_discussion
+        - get_discussion_comments
+        - discussion_comment_write
+
+  slack:
+    command: docker
+    args:
+      - run
+      - -i
+      - --rm
+      - -e
+      - SLACK_MCP_XOXB_TOKEN
+      - -e
+      - SLACK_MCP_ADD_MESSAGE_TOOL
+      - -e
+      - SLACK_MCP_ENABLED_TOOLS
+      - ghcr.io/korotovsky/slack-mcp-server:latest
+      - --transport
+      - stdio
+    env:
+      SLACK_MCP_XOXB_TOKEN: "${SLACK_BOT_TOKEN}"
+      # conversations_add_message is disabled by default in this server.
+      # Setting this to a channel ID (rather than 'true') enables posting
+      # only in that one channel, not the whole workspace.
+      SLACK_MCP_ADD_MESSAGE_TOOL: "${SLACK_HOME_CHANNEL}"
+      # Verified against the real server's source (pkg/handler/conversations.go):
+      # the channel restriction above is enforced independently, at call time,
+      # by reading SLACK_MCP_ADD_MESSAGE_TOOL directly — "without channel
+      # restrictions" only happens if that var is ALSO empty, which it never is
+      # here. conversations_add_message must still be listed below too, or the
+      # server's own tool-registration gating (a separate check) never
+      # registers it at all — confirmed live: omitting it left only 1 of 2
+      # tools discovered.
+      SLACK_MCP_ENABLED_TOOLS: "conversations_history,conversations_add_message"
+    tools:
+      # Read the maintainers channel for priority signals, reply there.
+      include:
+        - conversations_history
+        - conversations_add_message
+
+# Compose the two narrowed MCP toolsets into one named grant. Each is
+# already reduced to its verified tool list by mcp_servers.*.tools.include
+# above — this just groups them; it does not do any filtering of its own.
+custom_toolsets:
+  kyverno-assistant-tools:
+    - mcp-github
+    - mcp-slack
+    # kyverno-sequencer: a bundled plugin (plugins/kyverno-sequencer/), not an MCP server.
+    # Registers one tool, sequence_prs — a pure function over already-fetched PR metadata, no
+    # GitHub/Slack access of its own. See docs/architecture.md for the packaging verification.
+    - kyverno-sequencer
+    # kyverno-fetch: a bundled plugin (plugins/kyverno-fetch/). Registers fetch_pr_candidates —
+    # talks to GitHub's GraphQL API directly with this profile's own GITHUB_TOKEN, replacing
+    # N sequential pull_request_read calls with one tool call.
+    - kyverno-fetch
+
+toolsets: ["kyverno-assistant-tools"]
+
+# `toolsets:` only scopes MCP tool grants. Hermes' built-in tools (terminal,
+# file, browser, code_execution, etc.) ship enabled by default regardless —
+# this is the real control for those. See docs/architecture.md.
+platform_toolsets:
+  cli:
+    - memory
+    - skills
+    - todo
+    - session_search
+    - clarify
+    - cronjob
+
+hooks:
+  pre_tool_call:
+    - matcher: "merge|delete_repo|force_push"
+      command: "./hooks/block-dangerous-tools.sh"
+      timeout: 10
+      fail_closed: true
+    # memory.write_approval stages mnemosyne_remember correctly (verified: a
+    # real pending file appears on disk) but mnemosyne_triple_add commits
+    # straight to the database, bypassing the gate entirely (verified: no
+    # pending file, the row lands immediately). This hook is the real control
+    # for that tool specifically — see docs/v2-plan.md Phase 8.
+    - matcher: "mnemosyne_triple_add"
+      command: "./hooks/block-mnemosyne-triples.sh"
+      timeout: 10
+      fail_closed: true
+
+platforms:
+  slack:
+    reply_to_mode: "first"
+    typing_status_text: "checking the queue..."
+    require_mention: true
+    extra:
+      reply_in_thread: true
+      reply_broadcast: false
+
+memory:
+  memory_enabled: true
+  user_profile_enabled: true
+  # mnemosyne: local-only (SQLite, zero cloud), the one external provider of
+  # 9 real options that doesn't need a third-party account or a self-hosted
+  # server — everything else ships repo/Slack content to a vendor by design.
+  # Additive, not a replacement: MEMORY.md/USER.md stay active regardless.
+  provider: mnemosyne
+  # Every write staged for the maintainer's yes/no (/memory pending),
+  # including automatic background-review writes — this stores real
+  # repo/community judgments now, not just personal preferences. Known gap:
+  # this gate does not cover mnemosyne_triple_add (see the hook above) —
+  # verified live, not assumed from the plugin's own docs.
+  write_approval: true
+
+# Hermes' agent-side "curator" can write new skills on its own mid-session
+# (skill_manage) — found live: it authored a skill of its own accord in an
+# earlier session and used it during real testing, bypassing the toolset
+# allowlist above entirely (skill_manage is a core tool, not MCP/plugin —
+# not subject to custom_toolsets/toolsets). Same gate as memory.write_approval
+# above: every mutation staged for the maintainer instead of applied
+# silently, plus a scan on anything agent-authored.
+skills:
+  write_approval: true
+  guard_agent_created: true
+
+plugins:
+  enabled:
+    - mnemosyne
+    # kyverno-sequencer, kyverno-fetch: bundled at plugins/<name>/ (not the community catalog
+    # like mnemosyne) — installed as part of this repo, not a separate `hermes plugins install`.
+    - kyverno-sequencer
+    - kyverno-fetch
+agent: {}

@@ -1,0 +1,35 @@
+name: kyverno-assistant
+version: 0.1.0
+description: "On-demand PR review queue assistant for a Kyverno maintainer"
+hermes_requires: ">=0.12.0"
+author: "Suhaani Agarwal"
+license: "MIT"
+
+env_requires:
+  - name: GITHUB_TOKEN
+    description: "Fine-grained PAT: Contents Read, Pull requests Read & Write, Issues Read & Write, Checks Read, plus Code scanning alerts Read, Dependabot alerts Read, Secret scanning alerts Read, and org Members Read (for CODEOWNERS team resolution). No merge, no admin, no Contents Write."
+    required: true
+  - name: MAINTAINER_GITHUB_LOGIN
+    description: "GitHub username of the maintainer this instance serves — used to filter PRs where they're a requested reviewer via CODEOWNERS"
+    required: true
+  - name: SLACK_BOT_TOKEN
+    description: "Slack Bot User OAuth Token (xoxb-*) — needs chat:write, channels:history, channels:read, app_mentions:read"
+    required: true
+  - name: SLACK_APP_TOKEN
+    description: "Slack App-Level Token (xapp-*), from Socket Mode settings"
+    required: true
+  - name: SLACK_ALLOWED_USERS
+    description: "Comma-separated Slack member ID(s) authorized to use this assistant (should be just the installing maintainer)"
+    required: true
+  - name: SLACK_HOME_CHANNEL
+    description: "Maintainers channel ID to read priority signals from and post the queue in"
+    required: true
+  - name: KYVERNO_REPO
+    description: "owner/repo this assistant manages (default while prototyping: kyverno/test-ai-assistants)"
+    required: true
+  - name: ANTHROPIC_API_KEY
+    description: "Anthropic API key. Set this or COPILOT_GITHUB_TOKEN (at least one)."
+    required: false
+  - name: COPILOT_GITHUB_TOKEN
+    description: "Fine-grained PAT owned by your personal account with the Copilot Requests permission. Set this or ANTHROPIC_API_KEY (at least one)."
+    required: false
