@@ -171,8 +171,36 @@ patterns, retrieved automatically where relevant (e.g. flagging post-merge
 risk with real cited history, not just "no data"). See
 `docs/capabilities.md`'s "Remembering things across sessions".
 
-`docs/workflow.md` is the full target workflow (issue triage, a dashboard, session
+`docs/workflow.md` is the full target workflow (issue triage, the dashboard, session
 open/close) and its own "Build plan" section tracks what's built against what's still ahead.
+
+## The dashboard
+
+A browser board that shows what the agent just told you — linked, grouped, and
+sortable — so you don't scroll the chat or copy-paste links.
+
+**Open it:** `hermes -p kyverno dashboard`, then pick **Kyverno** in the sidebar under
+Plugins (or bookmark `http://127.0.0.1:9119/kyverno?profile=kyverno`). It re-reads
+every 15 seconds; a reload isn't needed.
+
+**When to use it:** keep it open next to the chat. Ask Hermes for a queue, stale PRs, an
+issue triage, or Discussions, and the result lands there as it answers. It fills only
+when the agent runs one of those, not in the background.
+
+**What it shows**
+
+- **Overview** — what's waiting on you, grouped by verdict (rescue, decide, review,
+  close, triage…), the milestone and its due date, gate status, and recent actions.
+- **PRs / Issues / Discussions** — one row per item with a GitHub link, state (CI, merge
+  state, size, labels), and the agent's verdict and reason. Switch between the agent's
+  views (queue, stale, triage), filter by verdict, search, and sort.
+- **Detail panel** — click any row for the summary, unresolved threads, a graph of related
+  PRs and issues (competing PRs on one issue show up together), and any drafted comment
+  waiting for your confirmation, with a copy button.
+- **Activity** — every action you confirmed (approvals, comments, nudges, closes,
+  deferrals) with a timestamp and a link to the result.
+
+The dashboard is read-only; confirming and acting still happens in the chat.
 
 ## Layout
 
@@ -198,6 +226,8 @@ open/close) and its own "Build plan" section tracks what's built against what's 
   ordering, explicit references, closing-issue conflicts), cycle detection,
   and topological layering into tiers — `pr-queue` orders within each tier
   itself. See `docs/architecture.md`.
+- `plugins/kyverno-dashboard/` — a bundled Hermes plugin: the `update_dashboard` tool the
+  skills call (via `dashboard-sync`) and the Kyverno tab in `hermes dashboard`.
 - `cron/jobs.json` — scheduled jobs the distribution ships: a weekday
   review digest posted to Slack, and two silent background jobs that keep
   memory current (`kyverno-memory-sweep`, `kyverno-memory-consolidate`).

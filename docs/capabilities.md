@@ -189,6 +189,14 @@ a merge-update, not a true git rebase (GitHub's API doesn't offer one),
 warning up front that the PR touches codegen inputs so the update alone
 won't regenerate now-stale generated files.
 
+## Seeing results on the dashboard
+
+Everything the agent presents — PR queue, stale PRs, issue triage, Discussions — and
+every action you confirm is also written to the Kyverno tab of `hermes -p kyverno
+dashboard`: linked items with verdicts, related PRs/issues, drafted comments, and an
+activity log. Use it to keep the full picture in front of you instead of scrolling the
+chat. See the README's "The dashboard".
+
 ## Boundaries, by design
 
 - **Never merges anything.** No merge tool exists in its toolset at all —

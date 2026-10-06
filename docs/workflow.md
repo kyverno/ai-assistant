@@ -142,7 +142,7 @@ Maintainer can also ask the agent to draft and post a reply to a discussion thre
 
 ## Dashboard
 
-The dashboard is a persistent page, one URL for the lifetime of the installation. The agent updates it during and between sessions. The maintainer has everything in one place with proper links.
+The dashboard is the Kyverno tab in `hermes -p kyverno dashboard` (`localhost:9119`), one URL for the lifetime of the installation. The agent updates it after every queue, brief, or triage it presents and after every confirmed action, through `update_dashboard` (the `dashboard-sync` skill). The tab re-reads its state every 15 seconds, so a reload is optional. The maintainer has everything in one place with proper links.
 
 It should be a page the maintainer actually wants to leave open — real visual design, not a bare table dump, and interactive: sortable/filterable panels, click through from a summary row into its detail panel.
 
@@ -172,7 +172,7 @@ What was reviewed, approved, deferred, triaged, closed last session. Links to ev
 ## Build plan
 
 PR-queue-building (the Queue/brief/Slack+Discussions-context parts of "PR work"), Phase 1,
-and most of Phase 2 below are built. Still to build: the dashboard, session open/close,
+most of Phase 2, and the dashboard (Phase 3) below are built. Still to build: session open/close,
 the rebase cascade, and the write-scope expansion for committing a fix. Four
 independently-shippable phases, in this order:
 
@@ -268,7 +268,7 @@ to the full relevant menu (approve/request-changes/comment/label/Discussion-or-i
 nudge/hand off to `author-followup`) — Slack dropped from this menu, same reason as the
 nudge above.
 
-**Defer** (record a reason in memory, no GitHub action, no dashboard yet) is built too.
+**Defer** (record a reason in memory and on the dashboard, no GitHub action) is built too.
 
 **Deliberately skipped this round, by maintainer decision:** the **rebase cascade**
 (re-checking `sequence_prs` for downstream PRs after an approval) — not built.
@@ -291,7 +291,9 @@ the real PAT already carries Contents:Write on GitHub's side) before touching
 ~24k linter threshold item 1 already named — the walkthrough-offer and execute-offer
 additions pushed it there. The split in `docs/v3-plan.md` item 1 is still not done.
 
-### Phase 3 — Dashboard
+### Phase 3 — Dashboard — BUILT
+
+The tab renders live and `dashboard-sync` is wired into `pr-queue`, `issue-triage`, `author-followup`, `discussions`, `pr-actions`, and `issue-actions`. The UI is styled entirely from the host's theme tokens so it follows the active Hermes theme.
 
 New bundled plugin, `plugins/kyverno-dashboard/`:
 

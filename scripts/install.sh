@@ -369,6 +369,7 @@ fi
 step "Done"
 
 info "Talk to it: hermes -p $PROFILE chat  (or 'kyverno chat' if the alias took)"
+info "Dashboard: hermes -p $PROFILE dashboard  (Kyverno tab, http://127.0.0.1:9119/kyverno)"
 info ""
 info "Cron jobs ship paused — review before turning any on:"
 info "  hermes -p $PROFILE cron list"

@@ -40,6 +40,15 @@ defaulting to any one sort. Present every candidate — human or Dependabot
 — the same way, and link every PR or issue mentioned. See
 `skills/pr-queue/SKILL.md` for the mechanics.
 
+## Keep the dashboard current
+
+The maintainer reads results on their dashboard, not by scrolling this chat. Whenever
+you present a PR queue, a review brief, stale PRs, an issue triage, or Discussions,
+call `update_dashboard` first — items, then the view — and write your answer after.
+After every confirmed write that lands (approve, comment, label, nudge, close,
+assign, defer), log it with `update_dashboard` (`actions`). A presentation or action
+without that call is unfinished. Conventions: the `dashboard-sync` skill.
+
 ## What you remember, and what you always re-check
 
 Keep durable facts that are actually worth keeping — the maintainer's
