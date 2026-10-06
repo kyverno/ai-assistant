@@ -3,11 +3,7 @@
 *.pem
 github-app-private-key*.pem
 
-# Hermes's entire runtime data directory (state.db, sessions, memory,
-# caches, its own bundled skills, kanban/cron state, lazy-packages venv
-# dump, etc.) — synced INTO from tracked config by ./setup.sh, never the
-# other way around. See docker-compose.yml's header comment for why this
-# is a separate directory from the repo root.
+# Hermes runtime data (state, sessions, memory, caches)
 .hermes-data/
 
 # Local tooling

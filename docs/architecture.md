@@ -10,8 +10,6 @@ kyverno-assistant is a [Hermes profile distribution](https://hermes-agent.nousre
 - MCP servers (GitHub, Slack) are declared under `config.yaml`'s `mcp_servers:` key directly
   — no separate `mcp.json`. A standalone `mcp.json` is only an *import* format
   (`hermes import-agent claude-code`), not something a profile install reads.
-- `docs/archive/` holds an earlier, abandoned webhook-triggered design (`kyctrl`) — reference
-  only, not part of this project.
 
 ## What it can and can't do
 

@@ -8,9 +8,7 @@ One maintainer installs it, fills in their own credentials, and talks to it on
 Slack or via `kyverno chat` — no server to run, no webhook receiver.
 
 **Status:** works today — install it and use it. Not yet validated across
-multiple real maintainers' workflows (`docs/deployment.md`'s validation
-plan), which is the bar for graduating to a dedicated
-`kyverno/kyverno-assistant` repo.
+multiple real maintainers' workflows (`docs/deployment.md`'s validation plan).
 
 ## Setup, from scratch
 
@@ -29,19 +27,16 @@ plan), which is the bar for graduating to a dedicated
 ### 2. Clone this repo
 
 ```bash
-git clone https://github.com/kyverno/test-ai-assistants.git
-cd test-ai-assistants
+git clone https://github.com/kyverno/ai-assistant.git
+cd ai-assistant
 ```
 
-(This assistant is prototyped in this sandbox repo rather than a dedicated
-one for now — see the Status note above. Install from the local checkout,
-as below, not from a git URL.)
+Install from this local checkout, as below, not from a git URL.
 
 ### 3. Get a GitHub token
 
 A fine-grained personal access token, scoped to the repo you'll point this
-at (`kyverno/kyverno` for real use, or `kyverno/test-ai-assistants` to try
-the sandbox scenarios first): Contents Read, Pull requests Read & Write,
+at (e.g. `kyverno/kyverno`): Contents Read, Pull requests Read & Write,
 Issues Read & Write, Checks Read, Code scanning alerts Read, Dependabot
 alerts Read, Secret scanning alerts Read, org Members Read. No Contents
 Write and no merge/admin scope — see `docs/architecture.md` for the full
@@ -132,9 +127,6 @@ hermes cron resume kyverno-review-digest
 Want a different time or channel? `hermes cron edit kyverno-review-digest`.
 
 `docs/capabilities.md` has a full tour with example prompts.
-`docs/test-scenarios.md` has a ready-made set of test PRs/issues on
-`kyverno/test-ai-assistants` if you want to try it before pointing it at
-`kyverno/kyverno`.
 
 ## What it does
 
@@ -251,9 +243,3 @@ The dashboard is read-only; confirming and acting still happens in the chat.
 - `docs/workflow.md` — the target maintainer workflow (PR work, issue work,
   session open/close, the dashboard) and, in its own "Build plan" section,
   the current phased plan for what's not built yet.
-- `docs/test-scenarios.md` — the fake PR/issue/CODEOWNERS environment built
-  on this repo for exercising the skills against realistic-shaped data.
-- `docs/testing-guide.md` — prompts exercising every capability above,
-  grounded in real counts on `kyverno/kyverno`.
-- `docs/archive/` — operational notes from the abandoned `kyctrl` design
-  this repo previously held (kept for reference, not part of this project).

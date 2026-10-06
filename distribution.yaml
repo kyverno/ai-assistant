@@ -25,7 +25,7 @@ env_requires:
     description: "Maintainers channel ID to read priority signals from and post the queue in"
     required: true
   - name: KYVERNO_REPO
-    description: "owner/repo this assistant manages (default while prototyping: kyverno/test-ai-assistants)"
+    description: "owner/repo this assistant manages (e.g. kyverno/kyverno)"
     required: true
   - name: ANTHROPIC_API_KEY
     description: "Anthropic API key. Set this or COPILOT_GITHUB_TOKEN (at least one)."

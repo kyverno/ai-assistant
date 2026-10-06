@@ -58,8 +58,7 @@ committed) and fill in these yourself:
 - `SLACK_HOME_CHANNEL` — the maintainers channel to read priority signals from
   and post the queue in. Invite the bot to it (`/invite @kyverno-assistant`).
 - `KYVERNO_REPO` — `owner/repo` this instance manages. Defaults to
-  `kyverno/test-ai-assistants` while prototyping; repoint at `kyverno/kyverno`
-  once validated.
+  `kyverno/kyverno`.
 - `ANTHROPIC_API_KEY` or `COPILOT_GITHUB_TOKEN` — set one. The installer
   picks the provider from whichever is filled in (Anthropic if both).
   `COPILOT_GITHUB_TOKEN` is a fine-grained PAT owned by your personal account
@@ -107,7 +106,7 @@ Before anything past v1 (see `docs/architecture.md`), validate end-to-end with
 2-3 real maintainers on real PR queues — install, point at their actual repo,
 confirm the queue reasoning (stacked PRs, generated-file conflicts, post-merge
 CI risk) matches what they'd conclude by hand. Only after that is v2 (merge,
-gated per the archived kyctrl pattern) worth building.
+gated) worth building.
 
 `skills/` is written (four skills — see README). `scripts/install.sh`
 already runs the checks below; by hand, confirm the toolset matches
