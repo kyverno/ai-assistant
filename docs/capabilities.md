@@ -1,9 +1,8 @@
 # What kyverno-assistant can do
 
-A tour of the three skills (`kyverno-context`, `pr-queue`, `pr-actions`) with
-real example prompts. Everything shown here maps directly to a skill's
-actual procedure — see the linked `skills/*/SKILL.md` for the full
-tool-by-tool detail behind each example.
+A tour of the assistant's skills with real example prompts. Everything shown
+here maps directly to a skill's actual procedure — see the linked
+`skills/*/SKILL.md` for the full tool-by-tool detail behind each example.
 
 ## Building a merge-sequence recommendation
 
@@ -87,6 +86,47 @@ generic "not approved yet."
 If another open PR is also configured to close the same issue, it says so —
 `closed_by_pull_requests` surfaces duplicate effort before you spend a
 review on either one without knowing.
+
+## PRs waiting on their author
+
+> **You:** which stale PRs should I close or reassign?
+
+Doesn't just flag "stale." Checks the linked issue for each: already fixed by
+a different, merged PR (close, citing it), already has another open PR
+competing for it (close in favor of that one), or genuinely still wanted
+(reassign, with the real path owners named from CODEOWNERS). Capped and
+ranked by real severity, never a flood of everything stale at once.
+
+## Triaging issues
+
+> **You:** tell me about issue #4512
+
+Identifies the likely subsystem and checks it against the real code — the
+package's own docs, or a direct code search — before classifying, rather
+than reading the issue's description back as if it were already verified.
+If more than one PR claims to close it, both show up as a real finding, not
+silently picked between. If the real code suggests this is actually
+security-relevant, says so plainly and suggests the real label — it won't
+sit as an ordinary bug just because nobody's looked closely yet.
+
+> **You:** give me the 10 newest triage-queue issues
+
+Same grounded read, as a batch, plus whatever Discussion or Slack context
+exists for each one.
+
+## Deciding on an issue
+
+> **You:** mark #4512 a duplicate of #4480
+
+Drafts the closing comment, shows you the exact text, then posts it and
+closes together once you confirm.
+
+> **You:** raise an issue for the thing we were just discussing
+
+Works from a direct request, or from something the agent itself noticed in
+Slack or a Discussion with nothing tracking it yet. Either way, drafts the
+issue and, if there's a source thread, a link-back reply to it — shown
+together before anything posts.
 
 ## Cross-referencing and CI breaks
 
