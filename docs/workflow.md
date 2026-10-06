@@ -6,6 +6,8 @@
 
 The agent eliminates mechanical work. The maintainer **decides**; the agent prepares, drafts, and executes. Every action on GitHub requires explicit maintainer confirmation — no silent writes, ever.
 
+After any action or any queue/brief it presents, the agent checks what that unblocks or relates to and names it as an offer, not a separate thing the maintainer has to remember to ask for — the rebase cascade after an approval, the author-nudge during triage, the stale-PR check after a queue, a re-triage offer after a reassignment are instances of this one standing rule, not separate features.
+
 ---
 
 ## Session open
@@ -45,11 +47,11 @@ Maintainer picks a PR, or agent recommends where to start. Agent presents:
 | Decision | What happens |
 |---|---|
 | **Approve** | Agent posts approval via GitHub API. Marks done in dashboard with timestamp. |
-| **Request changes** | Agent drafts the review comment incorporating maintainer's notes. Maintainer confirms or edits the draft. Agent posts it and applies `needs-author-action`, together, as one confirmed action. |
+| **Request changes** | Agent drafts the review comment incorporating maintainer's notes. Maintainer confirms or edits the draft. Agent posts it. `needs-author-action` is not applied by the agent — a review isn't a trigger for the real readiness workflow (fork PRs only get a read-only token, so a review couldn't write the label anyway); the existing hourly sweep picks up the unresolved thread and applies it within the hour. |
 | **Commit a fix** | Agent confirms the exact fix content with the maintainer first, then commits it directly to the PR's own branch via the GitHub API. Still never a merge. |
 | **Defer** | Agent records reason in memory. Marks deferred in dashboard. No GitHub action. |
 | **Flag conflict** | Agent drafts a comment on the PR flagging the conflict (e.g. two PRs closing the same issue). Maintainer confirms. Agent posts it. |
-| **Nudge the author** | PR is `needs-author-action` and stalled on something urgent (a severe linked issue, a near milestone). Agent drafts a nudge — a PR comment or a Slack message, whichever fits — maintainer confirms, agent posts it. A recommendation the agent raises proactively, not only on request. |
+| **Nudge the author** | PR is `needs-author-action` and stalled on something urgent (a severe linked issue, a near milestone). Agent drafts a nudge — a reply on a related GitHub Discussion thread if one exists, otherwise a comment on the PR or its linked issue, whichever fits — maintainer confirms, agent posts it. A recommendation the agent raises proactively, not only on request. |
 | **Apply e2e-gate-bypass** | Agent cannot do this on its own judgment — a deliberate human safety call, not a missing tool. Agent explains why it's needed and names the exact label. Maintainer applies it manually. |
 | **Approve fork workflow run** | Agent cannot do this — no tool wraps this GitHub endpoint, and it exists specifically so a human looks at untrusted fork code before it runs with repo-secrets access. Agent links to the GitHub Actions approval page. Maintainer approves in browser. |
 
@@ -103,10 +105,20 @@ Agent finds:
 
 For each, agent drafts the closing comment. Maintainer bulk-confirms or skips individually. Agent executes.
 
+### 5. Raising an issue
+
+Two triggers:
+- **Surfaced, not requested.** While reading Slack or a GitHub Discussion — during triage, session open, or on request — the agent finds a real user-facing problem with no open issue tracking it (not just an unanswered question). It flags this rather than staying silent, and offers to raise one.
+- **Requested directly.** Maintainer asks to raise an issue for something.
+
+Either way: agent drafts the title, body (the problem, reproduction context, and a link back to the source Slack message or Discussion thread when there is one), and a classification guess with labels. Maintainer confirms or edits the full draft — issue content and, where a source thread exists, a link-back reply to it. Agent creates the issue and posts the reply, together, as one confirmed action.
+
 ---
 
 ## GitHub Discussions
 Agent surfaces active discussions relevant to the current milestone or focus area, with links and summaries. Maintainer can ask the agent to go deeper on any discussion — full thread summary, key disagreements, current status, what decision (if any) is needed.
+
+Maintainer can also ask the agent to draft and post a reply to a discussion thread — same confirm-then-post pattern as everything else, the reply shown and confirmed before it's posted. When triage surfaces a user-facing problem in a Discussion thread, the agent offers both: raise a tracking issue for it (above) and/or reply in the thread acknowledging it — the same reply mechanism, not a separate one.
 
 ---
 
@@ -159,10 +171,10 @@ What was reviewed, approved, deferred, triaged, closed last session. Links to ev
 
 ## Build plan
 
-Today, only PR-queue-building (the Queue/brief/Slack+Discussions-context parts of "PR work") is
-built. Everything else above — Issue work, the dashboard, session open/close, the rebase
-cascade, and most of the PR decide-table — is still to build. Four independently-shippable
-phases, in this order:
+PR-queue-building (the Queue/brief/Slack+Discussions-context parts of "PR work"), Phase 1,
+and most of Phase 2 below are built. Still to build: the dashboard, session open/close,
+the rebase cascade, and the write-scope expansion for committing a fix. Four
+independently-shippable phases, in this order:
 
 ### Findings this plan rests on (verified live, not assumed)
 
@@ -193,35 +205,75 @@ phases, in this order:
   cross-ref extraction/resolution, the `issueOrPullRequest` union lookup, the cross-reference
   regex) are directly reusable for an issue-side fetch — read, not assumed from the PR-side
   tool's shape.
+- **Probed the real `github-mcp-server` tool surface again for this phase** (stdio
+  `tools/list`, `GITHUB_TOOLSETS=all`, 90 tools returned): there is no `create_issue` tool.
+  Issue creation is `issue_write` with `method: "create"` — the same multiplexed tool already
+  in `config.yaml`'s `tools.include`, just not restricted to `labels` the way `pr-actions`
+  restricts it for PRs. **No new tool grant needed** for raising an issue — corrects the
+  earlier assumption in this doc that a separate `create_issue` grant would be required.
 
-### Phase 1 — Issue work (triage, actions, relationship graph, staleness)
+### Phase 1 — Issue work (triage, actions, relationship graph, staleness, raising) — BUILT
 
-No new tool grants needed — `issue_write`/`add_issue_comment`/`issue_read`/`search_issues`/
-`list_issues` are already granted; `pr-actions` just self-restricts `issue_write` to `labels`
-for PRs. Issues get their own skills with the broader fields.
+`fetch_issue_candidates` (`plugins/kyverno-fetch/fetch.py`/`tools.py`), `skills/issue-triage/`,
+and `skills/issue-actions/` landed 2026-10-05. `closedByPullRequestsReferences` and
+`ClosedEvent.closer` were verified live end to end against `kyverno/kyverno` (not just schema
+introspection) — see `docs/architecture.md`. No `config.yaml` tool grant changed —
+`issue_write`/`add_issue_comment`/`issue_read`/`search_issues`/`list_issues` already covered
+triage, the decide-table, and raising an issue (`issue_write` with `method: "create"`,
+verified above — there is no separate `create_issue` tool); `discussion_comment_write` for the
+Discussion-reply piece was already granted too, and `skills/discussions` already implemented
+the confirm-then-post reply flow this phase reuses rather than rebuilding. Only the
+explanatory comment on `issue_write` changed, to say `pr-actions` restricts it to `labels` for
+PRs — `issue-actions` carries no such restriction, since it operates on real issues. Relationship
+surfacing and staleness housekeeping are written as on-request procedures in `issue-triage` but
+not yet run against a real backlog in a live session; the revert-detection heuristic there is
+explicitly best-effort.
 
-- Extend `plugins/kyverno-fetch/fetch.py` with `fetch_issue_candidates(repo, search_query,
-  limit)` — same template as `fetch_pr_candidates`, swapped to `is:issue`/`... on Issue`, plus
-  an issue-relevant field set (`labels`, `assignees`, `milestone`, `comments`,
-  `timelineItems` for revert/cross-ref detection — verify exact field names live first).
-- New skill `skills/issue-triage/`: classification guess, the issue↔PR relationship graph
+- `plugins/kyverno-fetch/fetch.py` gained `fetch_issue_candidates(repo, search_query, limit)` —
+  same template as `fetch_pr_candidates`, swapped to `is:issue`/`... on Issue`, plus an
+  issue-relevant field set (`labels`, `assignees`, `milestone`, `comments`, `closedByPullRequestsReferences`,
+  `timelineItems` for closer/revert detection — field names verified live, not assumed).
+- `skills/issue-triage/`: classification guess, the issue↔PR relationship graph
   (every PR that references or claims to close an issue, not just one — flags duplicate
   effort when more than one exists), the progress synthesis ("PR #X addresses this, currently
   `needs-author-action`, CI green"), the same Slack+Discussions context pass `pr-queue` does
-  for PRs, the author-nudge recommendation, subsystem guess (or an honest "unclear").
-- New skill `skills/issue-actions/`: the full decide-table — confirm bug/feature, mark
-  duplicate, close out-of-scope, needs-more-info, assign, add-to-milestone, nudge author.
-  Confirm-then-post throughout. Guardrail: `state`/`assignees`/`milestone` only ever on a real
-  Issue number, verified via `issueOrPullRequest`/`issue_read` — never a PR.
+  for PRs, the author-nudge recommendation, subsystem guess (or an honest "unclear"). When
+  that Slack/Discussions pass turns up a user-facing problem with no open issue, flags it as
+  a raise-issue candidate rather than passing over it.
+- `skills/issue-actions/`: the full decide-table — confirm bug/feature, mark
+  duplicate, close out-of-scope, needs-more-info, assign, add-to-milestone, nudge author,
+  raise an issue (drafted title/body/labels, plus a link-back reply when the source was a
+  Slack message or Discussion thread — one confirmed action covering both). Confirm-then-post
+  throughout. Guardrail: `state`/`assignees`/`milestone` only ever on a real Issue number,
+  verified via `issueOrPullRequest`/`issue_read` — never a PR.
 - Relationship surfacing and staleness housekeeping (on request): blocking-issue text
   references, orphaned milestone issues, reverted-closer issues (best-effort), cross-PR/
   open-issue area overlap, milestone health; `needs-more-info` where the reporter already
   replied, long-stale issues, "fixed in vX" still-open issues.
 
-### Phase 2 — PR decision-table completion, recommend-and-offer, write-scope expansion
+### Phase 2 — PR decision-table completion, recommend-and-offer, write-scope expansion — PARTLY BUILT
 
-All mechanical extensions of `pr-actions`/`pr-queue`, no new infra beyond the token-scope
-change below.
+Landed 2026-10-06: **Request changes** does *not* also apply `needs-author-action` —
+checked the real `pr-readiness-check.yaml`: a review isn't a trigger for it at all (fork
+PRs only ever get a read-only token, so a review couldn't write the label anyway); the
+hourly sweep applies it from the unresolved-thread state, so the agent doing it too would
+just be racing a mechanism already about to do it. **Flag conflict**, **Nudge the
+author** (a related Discussion reply, or a PR/issue comment — no Slack), **Apply
+e2e-gate-bypass** (explain + name the label, never apply it) are built in
+`pr-actions/SKILL.md`. **Approve fork workflow run** now builds the real approval-page
+link from `actions_list`'s own `html_url`, in `pr-queue`. **Recommend-and-offer** is
+built: the queue presentation offers the guided walkthrough; the review brief's
+recommendation gets an offer to execute it in the same turn; the deep-dive widens that
+to the full relevant menu (approve/request-changes/comment/label/Discussion-or-issue
+nudge/hand off to `author-followup`) — Slack dropped from this menu, same reason as the
+nudge above.
+
+**Defer** (record a reason in memory, no GitHub action, no dashboard yet) is built too.
+
+**Deliberately skipped this round, by maintainer decision:** the **rebase cascade**
+(re-checking `sequence_prs` for downstream PRs after an approval) — not built.
+
+**Not done — a real write-scope decision, not mechanical:**
 
 - `distribution.yaml`: `GITHUB_TOKEN` description gains `Contents Write`.
 - `config.yaml`: move `create_or_update_file`/`push_files` into
@@ -229,18 +281,15 @@ change below.
   via the same live `tools/list` probe. `delete_file` and `merge_pull_request` stay excluded.
 - `pr-actions/SKILL.md`: new **commit a fix** procedure (confirm exact content first, commit
   straight to the PR's own branch, report the SHA — never a merge, never another branch).
-- **Request changes** becomes the compound action the table above specifies: post the review
-  *and* apply `needs-author-action`, together, one confirmed action.
-- **Defer**, **Flag conflict**, **Nudge the author**, **Apply e2e-gate-bypass** (explain +
-  name the label, never apply it): new short procedures, each confirm-then-post.
-- **Approve fork workflow run**: stays link-only — build the link from `actions_list`/
-  `actions_get`'s own `html_url` (already granted).
-- **Rebase cascade**: after a confirmed approval, re-check `sequence_prs`'s `rebase_flag` for
-  downstream PRs, offer to comment, confirm, post.
-- **Recommend-and-offer**: `pr-queue`'s queue presentation offers the guided walkthrough; its
-  review brief's existing recommendation gets an offer to execute it in the same turn; the
-  deep-dive's offer widens to the full relevant action menu (approve/request-changes/comment/
-  label/ask in Discussion or Slack/act on the related issue).
+
+This is the one piece of Phase 2 that gives the agent real code-write capability against
+a live OSS repo, not just labels/comments — needs an explicit decision (and confirmation
+the real PAT already carries Contents:Write on GitHub's side) before touching
+`config.yaml`.
+
+**Known debt from this phase:** `pr-queue/SKILL.md` is now 24,937 characters, over the
+~24k linter threshold item 1 already named — the walkthrough-offer and execute-offer
+additions pushed it there. The split in `docs/v3-plan.md` item 1 is still not done.
 
 ### Phase 3 — Dashboard
 
@@ -274,7 +323,11 @@ Reads from all three other phases, so it lands last.
 
 - Phase 1: an issue with two independent PRs shows both, flagged, with a progress synthesis;
   Slack/Discussions checked for issues the same as for PRs; `issue-actions` never touches
-  `state`/`assignees`/`milestone` on a PR.
+  `state`/`assignees`/`milestone` on a PR; a raise-issue draft (from a direct request or a
+  triage-surfaced finding) never calls `issue_write` with `method: "create"` before the
+  maintainer confirms the exact title/body; a Discussion reply triggered from issue-triage
+  goes through the same
+  `discussion_comment_write` confirm-then-post flow as `skills/discussions`, not a duplicate.
 - Phase 2: `create_or_update_file` succeeds against a real PR branch with the new scope;
   Request Changes applies the review and the label together; the queue offers a walkthrough;
   a review brief offers to execute its own recommendation in the same turn.

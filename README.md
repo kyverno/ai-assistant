@@ -29,9 +29,13 @@ plan), which is the bar for graduating to a dedicated
 ### 2. Clone this repo
 
 ```bash
-git clone https://github.com/kyverno/ai-assistant.git
+git clone https://github.com/kyverno/test-ai-assistants.git
 cd test-ai-assistants
 ```
+
+(This assistant is prototyped in this sandbox repo rather than a dedicated
+one for now — see the Status note above. Install from the local checkout,
+as below, not from a git URL.)
 
 ### 3. Get a GitHub token
 
@@ -103,6 +107,15 @@ kyverno chat
 ```
 
 or mention the bot in the Slack channel you invited it to.
+
+Claude Sonnet is the default model for either provider. To use any other model
+your provider offers (Copilot's catalog includes GPT and Gemini models too):
+
+- inside a chat, `/model <name>` switches the current session, or
+  `/model <name> --global` also saves it;
+- from the shell, `hermes -p kyverno model` opens the picker for new sessions.
+
+Saved choices survive re-running `./scripts/install.sh`.
 
 ### 7. Turn on the review digest (optional)
 

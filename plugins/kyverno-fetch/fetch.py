@@ -337,6 +337,28 @@ def _fetch_one(owner: str, name: str, number: int) -> dict[str, Any]:
     }
 
 
+# Everything sequence_prs/the severity ladder read, minus the free text that causes spillover
+# (body, copilot_review's parsed text) — keeps a whole-candidate-set ranking pass small.
+_PR_DIGEST_FIELDS = (
+    "number", "title", "url", "author", "is_dependabot", "merge_state", "dependency_bumps",
+    "bumps", "semver_level", "author_association", "created_at", "base_branch", "head_branch",
+    "size", "milestone", "milestone_due_on", "labels", "labels_truncated", "changed_files",
+    "files_truncated", "unresolved_review_threads", "review_threads_truncated",
+    "coderabbit_approved", "ci_state", "ci_state_truncated", "closing_issues",
+    "external_references", "maintainer_can_modify", "staled_at", "last_commit_at",
+    "comment_count", "author_comments_since_stale",
+)
+
+
+def _pr_digest(pr: dict[str, Any]) -> dict[str, Any]:
+    if "error" in pr:
+        return pr
+    digest = {k: pr[k] for k in _PR_DIGEST_FIELDS if k in pr}
+    # closing_issues' assignees/other_closing_prs (added by _fetch_one_stale) are themselves
+    # small — titles and logins, never a PR/issue body — kept as-is, not stripped further.
+    return digest
+
+
 # A body reference ("Parent: #N") may name an issue, not a PR — GitHub shares one number
 # sequence between them. issueOrPullRequest resolves either without erroring on a type
 # mismatch the way a plain pullRequest(number:) field does.
@@ -362,10 +384,85 @@ def _resolve_ref_state(owner: str, name: str, number: int) -> dict[str, Any]:
     return {"number": node["number"], "kind": kind, "state": node["state"], "title": node["title"]}
 
 
-def fetch_pr_candidates(repo: str, search_query: str, limit: int = 15) -> dict[str, Any]:
+# Only run for PRs the caller already knows are stale/author-blocked — these fields cost a
+# second GraphQL round trip each, so they stay off the common fetch_pr_candidates path.
+_STALE_DETAIL_QUERY = """
+query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      maintainerCanModify
+      comments(last: 20) { totalCount nodes { author { login } body createdAt } }
+      timelineItems(first: 50, itemTypes: [LABELED_EVENT]) {
+        nodes { ... on LabeledEvent { createdAt label { name } } }
+      }
+      commits(last: 1) { nodes { commit { committedDate } } }
+    }
+  }
+}
+"""
+
+
+def _fetch_one_stale(owner: str, name: str, number: int) -> dict[str, Any]:
+    """Enriches _fetch_one's normal PR fetch with the extra facts an author-blocked decision
+    needs: when it actually went stale, the author's own comments since, days since their last
+    commit, whether the maintainer can push to the branch, and — reusing _fetch_issue_one rather
+    than a second closing-issue lookup — each closing issue's real assignees and every other open
+    PR also claiming to close it."""
+    pr = _fetch_one(owner, name, number)
+    if "error" in pr:
+        return pr
+
+    data = _graphql(_STALE_DETAIL_QUERY, {"owner": owner, "name": name, "number": number})
+    extra = data["repository"]["pullRequest"]
+
+    staled_at = next(
+        (
+            item["createdAt"]
+            for item in extra["timelineItems"]["nodes"]
+            if item["label"]["name"] == "stale"
+        ),
+        None,
+    )
+    commit_nodes = extra["commits"]["nodes"]
+    last_commit_at = commit_nodes[0]["commit"]["committedDate"] if commit_nodes else None
+
+    pr["maintainer_can_modify"] = extra["maintainerCanModify"]
+    pr["staled_at"] = staled_at
+    pr["last_commit_at"] = last_commit_at
+    pr["comment_count"] = extra["comments"]["totalCount"]
+    pr["author_comments_since_stale"] = [
+        {"body": c["body"], "created_at": c["createdAt"]}
+        for c in extra["comments"]["nodes"]
+        if (c["author"] or {}).get("login") == pr["author"]
+        and (staled_at is None or c["createdAt"] > staled_at)
+    ]
+
+    for issue in pr["closing_issues"]:
+        try:
+            issue_detail = _fetch_issue_one(owner, name, issue["number"])
+        except FetchError:
+            continue
+        issue["assignees"] = issue_detail.get("assignees", [])
+        issue["other_closing_prs"] = [
+            p for p in issue_detail.get("closing_prs", []) if p["number"] != number
+        ]
+    return pr
+
+
+# Safe ceiling for one digest call — changed_files lists alone push ~90 PRs past the 100K
+# spillover threshold even with body/review text stripped.
+_DIGEST_LIMIT_CEILING = 60
+
+
+def fetch_pr_candidates(
+    repo: str, search_query: str, limit: int = 15, include_stale_detail: bool = False,
+    detail: str = "full",
+) -> dict[str, Any]:
     if "/" not in repo:
         raise FetchError(f"repo must be 'owner/name', got {repo!r}")
     owner, name = repo.split("/", 1)
+    if detail == "digest":
+        limit = min(limit, _DIGEST_LIMIT_CEILING)
 
     full_search = f"repo:{repo} is:pr is:open draft:false {search_query}".strip()
     search_data = _graphql(_SEARCH_QUERY, {"search": full_search, "first": min(limit, 100)})
@@ -373,11 +470,12 @@ def fetch_pr_candidates(repo: str, search_query: str, limit: int = 15) -> dict[s
     numbers = [n["number"] for n in search_result["nodes"] if n]
     total_count = search_result["issueCount"]
 
+    fetch_one = _fetch_one_stale if include_stale_detail else _fetch_one
     prs: list[dict[str, Any]] = []
     errors: list[str] = []
     if numbers:
         with concurrent.futures.ThreadPoolExecutor(max_workers=min(8, len(numbers))) as pool:
-            futures = {pool.submit(_fetch_one, owner, name, n): n for n in numbers}
+            futures = {pool.submit(fetch_one, owner, name, n): n for n in numbers}
             for future in concurrent.futures.as_completed(futures):
                 n = futures[future]
                 try:
@@ -412,6 +510,9 @@ def fetch_pr_candidates(repo: str, search_query: str, limit: int = 15) -> dict[s
             if p["number"] in refs_by_pr:
                 p["external_references"] = [resolved[n] for n in sorted(refs_by_pr[p["number"]])]
 
+    if detail == "digest":
+        prs = [_pr_digest(p) for p in prs]
+
     prs.sort(key=lambda p: p.get("number", 0))
     return {
         "total_count": total_count,
@@ -420,6 +521,235 @@ def fetch_pr_candidates(repo: str, search_query: str, limit: int = 15) -> dict[s
         "prs": prs,
         "errors": errors,
     }
+
+
+def fetch_pr_details(
+    repo: str, pr_numbers: list[int], include_stale_detail: bool = False
+) -> dict[str, Any]:
+    """Phase 2 of the digest/full split: full detail (body, diffs, review text) for an explicit
+    list of PR numbers already chosen by a digest-ranked pass — skips the search step."""
+    if "/" not in repo:
+        raise FetchError(f"repo must be 'owner/name', got {repo!r}")
+    owner, name = repo.split("/", 1)
+
+    fetch_one = _fetch_one_stale if include_stale_detail else _fetch_one
+    prs: list[dict[str, Any]] = []
+    errors: list[str] = []
+    if pr_numbers:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=min(8, len(pr_numbers))) as pool:
+            futures = {pool.submit(fetch_one, owner, name, n): n for n in pr_numbers}
+            for future in concurrent.futures.as_completed(futures):
+                n = futures[future]
+                try:
+                    prs.append(future.result())
+                except FetchError as exc:
+                    errors.append(f"PR #{n}: {exc}")
+
+    prs.sort(key=lambda p: p.get("number", 0))
+    return {"fetched": len(prs), "prs": prs, "errors": errors}
+
+
+_ISSUE_SEARCH_QUERY = """
+query($search: String!, $first: Int!) {
+  search(query: $search, type: ISSUE, first: $first) {
+    issueCount
+    nodes { ... on Issue { number } }
+  }
+}
+"""
+
+# closedByPullRequestsReferences resolves every PR whose body/commits name a closing keyword
+# for this issue, open or merged — GitHub's own keyword parser, not a body-text regex, so a
+# second competing PR shows up here too. ClosedEvent's `closer` union names the PR or commit
+# that actually closed it, when it did.
+_ISSUE_DETAIL_QUERY = """
+query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    issue(number: $number) {
+      number
+      title
+      url
+      body
+      author { login }
+      authorAssociation
+      createdAt
+      state
+      stateReason
+      milestone { title dueOn state }
+      labels(first: 100) { pageInfo { hasNextPage } nodes { name } }
+      assignees(first: 20) { pageInfo { hasNextPage } nodes { login } }
+      comments(last: 20) { totalCount nodes { author { login } body createdAt } }
+      closedByPullRequestsReferences(first: 20, includeClosedPrs: true) {
+        pageInfo { hasNextPage }
+        nodes { number title state }
+      }
+      timelineItems(first: 50, itemTypes: [CLOSED_EVENT, REOPENED_EVENT]) {
+        pageInfo { hasNextPage }
+        nodes {
+          __typename
+          ... on ClosedEvent {
+            createdAt
+            closer {
+              __typename
+              ... on PullRequest { number }
+              ... on Commit { oid }
+            }
+          }
+          ... on ReopenedEvent { createdAt }
+        }
+      }
+      parent { number title state }
+      subIssues(first: 10) { nodes { number title state } }
+      trackedInIssues(first: 10) { nodes { number title state } }
+    }
+  }
+}
+"""
+
+
+def _fetch_issue_one(owner: str, name: str, number: int) -> dict[str, Any]:
+    data = _graphql(_ISSUE_DETAIL_QUERY, {"owner": owner, "name": name, "number": number})
+    issue = data["repository"]["issue"]
+    if issue is None:
+        return {"number": number, "error": "not found (deleted, transferred, or renumbered mid-fetch?)"}
+
+    timeline = issue["timelineItems"]["nodes"]
+    closed_by: Optional[dict[str, Any]] = None
+    for item in timeline:
+        if item["__typename"] != "ClosedEvent":
+            continue
+        closer = item.get("closer") or {}
+        if closer.get("__typename") == "PullRequest":
+            closed_by = {"pr_number": closer["number"], "commit_oid": None, "closed_at": item["createdAt"]}
+        elif closer.get("__typename") == "Commit":
+            closed_by = {"pr_number": None, "commit_oid": closer["oid"], "closed_at": item["createdAt"]}
+    reopened = any(item["__typename"] == "ReopenedEvent" for item in timeline)
+
+    milestone = issue["milestone"] or {}
+    body = issue["body"] or ""
+    return {
+        "number": issue["number"],
+        "title": issue["title"],
+        "url": issue["url"],
+        "body": body,
+        # GitHub's own sub-issue/tracking links — real when present, never a text guess.
+        # Rare in practice (most contributors write the relationship as prose instead), so
+        # absence here doesn't mean no relationship exists — read the body for that.
+        "parent": issue["parent"],
+        "sub_issues": [n for n in issue["subIssues"]["nodes"]],
+        "tracked_in_issues": [n for n in issue["trackedInIssues"]["nodes"]],
+        "author": (issue["author"] or {}).get("login"),
+        "author_association": issue["authorAssociation"],
+        "created_at": issue["createdAt"],
+        "state": issue["state"],
+        "state_reason": issue["stateReason"],
+        "milestone": milestone.get("title"),
+        "milestone_open": milestone.get("state") == "OPEN" if milestone else None,
+        "milestone_due_on": milestone.get("dueOn"),
+        "labels": [n["name"] for n in issue["labels"]["nodes"]],
+        "labels_truncated": issue["labels"]["pageInfo"]["hasNextPage"],
+        "assignees": [n["login"] for n in issue["assignees"]["nodes"]],
+        "assignees_truncated": issue["assignees"]["pageInfo"]["hasNextPage"],
+        "comment_count": issue["comments"]["totalCount"],
+        "recent_comments": [
+            {
+                "author": (c["author"] or {}).get("login"),
+                "body": c["body"],
+                "created_at": c["createdAt"],
+            }
+            for c in issue["comments"]["nodes"]
+        ],
+        # Every PR referencing a close for this issue, not just the one that actually closed
+        # it — a second, competing PR against the same issue shows up here too.
+        "closing_prs": [
+            {"number": n["number"], "title": n["title"], "state": n["state"]}
+            for n in issue["closedByPullRequestsReferences"]["nodes"]
+        ],
+        "closing_prs_truncated": issue["closedByPullRequestsReferences"]["pageInfo"]["hasNextPage"],
+        # The PR/commit that actually closed it, when the timeline window covers that event —
+        # distinct from closing_prs above, which includes PRs that reference it but never
+        # merged. None if still open, or if the close predates this 50-item window.
+        "closed_by": closed_by,
+        "reopened_since_closed": reopened,
+    }
+
+
+# Same idea as _PR_DIGEST_FIELDS: everything a relational default (no linked PR, milestone
+# health, duplicate-effort detection) needs, minus the issue body and comment text.
+_ISSUE_DIGEST_FIELDS = (
+    "number", "title", "url", "author", "author_association", "created_at", "state",
+    "state_reason", "milestone", "milestone_open", "milestone_due_on", "labels",
+    "labels_truncated", "assignees", "assignees_truncated", "comment_count", "closing_prs",
+    "closing_prs_truncated", "closed_by", "reopened_since_closed", "parent", "sub_issues",
+    "tracked_in_issues",
+)
+
+
+def _issue_digest(issue: dict[str, Any]) -> dict[str, Any]:
+    if "error" in issue:
+        return issue
+    return {k: issue[k] for k in _ISSUE_DIGEST_FIELDS if k in issue}
+
+
+def fetch_issue_candidates(
+    repo: str, search_query: str, limit: int = 15, detail: str = "full"
+) -> dict[str, Any]:
+    if "/" not in repo:
+        raise FetchError(f"repo must be 'owner/name', got {repo!r}")
+    owner, name = repo.split("/", 1)
+
+    full_search = f"repo:{repo} is:issue {search_query}".strip()
+    search_data = _graphql(_ISSUE_SEARCH_QUERY, {"search": full_search, "first": min(limit, 100)})
+    search_result = search_data["search"]
+    numbers = [n["number"] for n in search_result["nodes"] if n]
+    total_count = search_result["issueCount"]
+
+    issues: list[dict[str, Any]] = []
+    errors: list[str] = []
+    if numbers:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=min(8, len(numbers))) as pool:
+            futures = {pool.submit(_fetch_issue_one, owner, name, n): n for n in numbers}
+            for future in concurrent.futures.as_completed(futures):
+                n = futures[future]
+                try:
+                    issues.append(future.result())
+                except FetchError as exc:
+                    errors.append(f"Issue #{n}: {exc}")
+
+    if detail == "digest":
+        issues = [_issue_digest(i) for i in issues]
+
+    issues.sort(key=lambda i: i.get("number", 0))
+    return {
+        "total_count": total_count,
+        "fetched": len(issues),
+        "truncated": total_count > len(issues),
+        "issues": issues,
+        "errors": errors,
+    }
+
+
+def fetch_issue_details(repo: str, issue_numbers: list[int]) -> dict[str, Any]:
+    """Phase 2 of the digest/full split: full detail (body, comments) for an explicit list of
+    issue numbers already chosen by a digest-ranked pass — skips the search step entirely."""
+    if "/" not in repo:
+        raise FetchError(f"repo must be 'owner/name', got {repo!r}")
+    owner, name = repo.split("/", 1)
+
+    issues: list[dict[str, Any]] = []
+    errors: list[str] = []
+    if issue_numbers:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=min(8, len(issue_numbers))) as pool:
+            futures = {pool.submit(_fetch_issue_one, owner, name, n): n for n in issue_numbers}
+            for future in concurrent.futures.as_completed(futures):
+                n = futures[future]
+                try:
+                    issues.append(future.result())
+                except FetchError as exc:
+                    errors.append(f"Issue #{n}: {exc}")
+
+    issues.sort(key=lambda i: i.get("number", 0))
+    return {"fetched": len(issues), "issues": issues, "errors": errors}
 
 
 def _get_patch_for_file(owner: str, name: str, number: int, path: str) -> Optional[str]:

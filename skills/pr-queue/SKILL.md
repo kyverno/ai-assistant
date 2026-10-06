@@ -16,27 +16,31 @@ milestone/fixed facts — assumed loaded, not re-derived here.
 ## When to Use
 
 - Maintainer asks for their review queue, what's outstanding, or about a specific PR.
-- Maintainer asks which Dependabot PRs to review, merge, or leave alone.
 - Maintainer reports CI broke on `main` and wants to know what's affected.
 - Not for: taking an action (label, comment, approve, rebase) — that's `pr-actions`.
+  Not for: a dedicated Dependabot pass — `dependabot-queue` (a sweep-labelled
+  Dependabot PR still appears in this queue too, with no special formatting). Not
+  for: a stale/author-blocked PR — `author-followup`.
 
 ## Prerequisites
 
 - `kyverno-context` loaded this session.
 - `fetch_pr_candidates` (plugin tool, `plugins/kyverno-fetch/`) — one call fetches
-  every candidate's full metadata.
+  every candidate's full metadata. `detail="digest"` (capped at 60) drops body/
+  review text for ranking a whole set by something search can't filter on
+  directly ("most urgent") — pair it with `fetch_pr_details` for just the
+  chosen numbers' full data.
 - `sequence_prs` (plugin tool, `plugins/kyverno-sequencer/`) — builds the hard-
   dependency graph and layers it into tiers.
 - `fetch_file_diff_overlap` (plugin tool, `plugins/kyverno-fetch/`) — fetches
   the real diff hunks for a `file_overlaps` entry's shared file, to read.
 - `mcp-github`: `search_pull_requests`, `search_issues`, `list_issues`, `issue_read`, `search_code`, `list_releases`,
   `get_latest_release`, `list_code_scanning_alerts`, `get_code_scanning_alert`,
-  `list_dependabot_alerts`, `get_dependabot_alert`, `list_secret_scanning_alerts`,
-  `get_secret_scanning_alert`, `actions_list`, `actions_get`, `get_job_logs`,
-  `request_copilot_review`, `pull_request_read` (review-brief deep dives only —
-  `fetch_pr_candidates` already covers the main queue build), `list_discussions`,
-  `get_discussion` (read-only context lookup — posting a reply is `discussions`'
-  job, not this skill's).
+  `list_secret_scanning_alerts`, `get_secret_scanning_alert`, `actions_list`,
+  `actions_get`, `get_job_logs`, `request_copilot_review`, `pull_request_read`
+  (review-brief deep dives only — `fetch_pr_candidates` already covers the main
+  queue build), `list_discussions`, `get_discussion` (read-only context lookup —
+  posting a reply is `discussions`' job, not this skill's).
 - `mcp-slack`: `conversations_history`, `conversations_add_message` — only if
   configured.
 - `mnemosyne_recall`/`_triple_query` (read), `mnemosyne_remember`/`_triple_add`
@@ -46,12 +50,21 @@ milestone/fixed facts — assumed loaded, not re-derived here.
 ## Procedure: build the merge-sequence recommendation
 
 **Step 0 — establish a focus before fetching.** If the request already names one,
-skip to Step 1. Otherwise ask: a milestone, an author, an area (package/folder), or
-`workflow-approval-required` PRs instead of the review queue. Never default to
+skip to Step 1. Otherwise offer a handful of starting points — not an exhaustive
+list, and the maintainer can name something else instead: a milestone, an author,
+an area (package/folder), `workflow-approval-required` PRs instead of the review
+queue, or the 10 most urgent `ready-for-review` PRs. Never default to
 oldest-first or "all PRs." Exception: `cron/jobs.json`'s `kyverno-review-digest` has
 no one to ask — use a fixed fallback (highest-urgency closing-issue label, then
 `coderabbit_approved` + zero unresolved threads, then most-recently-updated) and
 label it as the digest default, not the general rule.
+
+"Most urgent 10" ranks by the same ladder step 4 uses (closing-issue severity,
+milestone proximity, `coderabbit_approved`, author association, size) — none of
+that is a search qualifier, so it needs the digest pass: `fetch_pr_candidates(
+search_query="label:ready-for-review", detail="digest", limit=60)`, rank
+client-side, take the top 10, then `fetch_pr_details(repo, pr_numbers=[...])`
+for just those 10. State the slice size against the digest's own `total_count`.
 
 1. **Fetch**: `fetch_pr_candidates(repo=KYVERNO_REPO, search_query="label:ready-for-review")`
    plus the same call with `label:needs-review` — or one call with
@@ -62,9 +75,11 @@ label it as the digest default, not the general rule.
    GitHub search has no path qualifier. State the slice size vs. `total_count`
    whenever the set is narrowed. If Step 0 picked `workflow-approval-required`,
    fetch that separately and present it as its own short list (Output format below)
-   — it never goes into `sequence_prs`.
+   — it never goes into `sequence_prs`. For each, `actions_list` on the PR's head
+   branch/SHA to find the run waiting on approval, then cite that run's own
+   `html_url` — a real link to the approval page, not a generic pointer at GitHub.
    Dependabot PRs the triage sweep hasn't reached yet carry neither label and aren't
-   in this set — "Procedure: Dependabot queue" fetches by author instead.
+   in this set — `dependabot-queue` fetches by author instead.
 2. **Precedence**: nothing to prepare — `sequence_prs` derives all four hard-edge
    types (stacked, generated-file, explicit body reference, closing-issue conflict)
    itself from the fetched `body`/`changed_files`/`closing_issues`/`dependency_bumps`.
@@ -161,86 +176,20 @@ label it as the digest default, not the general rule.
 7. **Produce one ordered list**, tier by tier. Every position — human or Dependabot —
    renders identically (Output format below): no separate section, no bolded
    verdict styling that singles one kind out.
+8. **Offer the author-blocked check for this same scope** — `fetch_pr_candidates(...,
+   search_query="label:stale")` with Step 0's scope added, count-only (no
+   `include_stale_detail`, that's `author-followup`'s own fetch). A nonzero count: name
+   it and offer to look into them (`author-followup`), don't run it unasked. Zero: skip
+   silently, don't mention it.
+9. **Offer a guided walkthrough**: work the queue in the order just produced, one PR
+   at a time (brief → decide → act → next — the review-brief procedure's own
+   execute-offer below), rather than only handing back the static list. Maintainer
+   can accept, or jump to any PR by number instead — never insist on the walkthrough
+   once a number is named.
 
 Completion criterion: every fetched candidate appears exactly once, every claim
 traces to a cited tool call or `sequence_prs` field, and a human could re-derive the
 order from the stated reasons alone.
-
-## Procedure: Dependabot queue
-
-For "which Dependabot PRs should I review/merge", "anything risky in the bumps",
-"what do I do about #N" (a Dependabot PR). The focus is already named, so Step 0 is
-skipped. Every Dependabot PR still appears exactly once.
-
-1. **Fetch by author, not label**: `fetch_pr_candidates(repo=KYVERNO_REPO,
-   search_query="author:app/dependabot", limit=50)`. Use each PR's own `semver_level`,
-   `bumps` (name/from/to), `copilot_review`, `merge_state`, `ci_state`; the labels
-   (`ready-for-review`, `needs-review`, `major-bump`) are the triage sweep's read of the
-   same facts — cite them when they agree, and say so when a label is missing or
-   contradicts the fetched level. `semver_level: unknown` is handled as an unconfirmed
-   major.
-2. **Group the set**: the same dependency in several PRs (e.g. one action bumped in two
-   directories) or one `group` is one decision, presented once. `labels` give the kind:
-   `go` (module), `github_actions` (workflow action).
-3. **Security**: a PR carrying `security`, or whose body names a `GHSA-`/`CVE-` ID,
-   addresses a known advisory — cite the ID from the body. Also
-   `list_dependabot_alerts(state="open")` once and match each alert's package to the
-   bumps for its severity; a refused call means this token can't see alerts — say so
-   and rely on the PR body.
-4. **Risk, per PR**, each claim cited:
-   - Go module: `search_code` the import path in `KYVERNO_REPO`, group call sites by
-     package; hits under `pkg/engine`/`pkg/cel`/`pkg/webhooks`/`pkg/validation`/
-     `pkg/image` are elevated risk. For a major or minor bump, read the release notes
-     the PR body embeds and name any breaking change or deprecation that touches those
-     call sites. `k8s.io/*`, `sigs.k8s.io/*` and `github.com/kyverno/api` bumps
-     (`kind/codegen`) also need the regenerated outputs in the PR's `changed_files` — a
-     `go.mod`/`go.sum`-only diff means they're stale.
-   - Workflow action: `search_code` for `uses: <action>` to name the workflows that run
-     it; one with write permissions, secrets, or a release/publish step is elevated.
-     A major bump usually changes the action's runtime — read its notes for that.
-   - CI not green: `pull_request_read(method="get_check_runs")` for the failing checks'
-     names. The same check failing on unrelated Dependabot PRs is a shared cause —
-     report it once and say it isn't this bump's doing.
-   - `mnemosyne_triple_query` for `caused_e2e_failure` on the packages the call sites
-     fall in; `mnemosyne_recall` for an earlier decision on this dependency (a
-     deliberate skip, a known-bad version).
-5. **Reviews**: `copilot_review.verdict`/`summary`/`findings`, and `coderabbit_approved`.
-   When Copilot isn't approving, `pull_request_read(method="get_review_comments")` and
-   say whether each finding needs a code change (blocking) or is advisory (changelog,
-   docs). Any human review is read the same way.
-6. **Relations**:
-   - Came after: `search_pull_requests(query='author:app/dependabot is:merged "<dep>"')`
-     for the earlier bump(s) of the same dependency or group — a PR opened right after
-     its sibling merged is that follow-up, say which.
-   - Related PRs: `search_pull_requests(query='is:open "<dep>"')` for non-Dependabot
-     PRs that mention the dependency, and the `sequence_prs` pass below.
-   - Blocks / blocked by: call `sequence_prs` with the Dependabot PRs plus any
-     related open PRs. Dependabot PRs overlap on `go.mod`/`go.sum` by nature — report
-     that as one note (merge one at a time; Dependabot rebases the rest), not as a
-     conflict per pair. A `github.com/kyverno/api` bump orders ahead of PRs touching
-     generated outputs; state `gate_blocked` wherever true.
-7. **Verdict and timing, per PR** — exactly one:
-   - **Merge now**: patch/minor, `merge_state` CLEAN, CI green, Copilot approving, no
-     elevated-risk call sites, no open question from step 6.
-   - **Fix first**: a concrete, nameable blocker — a blocking Copilot finding,
-     a conflict (`@dependabot rebase`), failing check, stale generated outputs.
-   - **Your review**: major or unknown level, elevated risk, or a codegen-linked bump.
-     Land it when you can watch main's post-merge conformance run (the only suite that
-     exercises it), and never while `gate_blocked`.
-   - **Wait**: CI pending, or blocked behind a sibling in step 6.
-   - **Close/ignore**: a duplicate of another open PR, or a bump the maintainer
-     already decided against (`@dependabot ignore this major version`).
-   Executing any of these (approve, `@dependabot` or `@copilot` comment) is
-   `pr-actions`; merging is always the maintainer's own click.
-8. **Order**: security fixes first, by severity; then **Merge now**, oldest first
-   (each `go.mod` merge makes the next need a rebase, so the batch goes one at a
-   time); then **Fix first**; then **Your review**; then **Wait**; then **Close/
-   ignore**. Slack/Discussions context (step 6 of the main Procedure) and anything the
-   maintainer said this session override the order.
-
-Output: grouped under those verdict headings, each PR as its link, `dep from → to
-(level)`, the verdict with its timing, and the cited reasons — risk (call sites by
-file), Copilot's verdict, the CI cause, related PRs, and what it blocks or waits on.
 
 ## Procedure: review brief (explain PR #N)
 
@@ -263,6 +212,14 @@ Long form (asked for, or a signal below is concerning) adds:
 - Suggested action (approve / request changes / wait on CI / needs author to resolve
   threads / proceed but flagged as high post-merge risk), stated with its reason.
   Before drafting, `mnemosyne_recall` for durable notes on this PR's author.
+
+**Offer to execute the suggestion in the same turn** — "want me to approve this
+now?" not a separate ask the maintainer has to come back for. Short-form offers
+just that one action. Long-form (deep-dive, or a risk signal already made this
+long-form) widens the offer to whichever of `pr-actions`' full menu actually fits
+here — approve, request changes, comment, a label, a Discussion/issue nudge, or
+handing a stalled author's case to `author-followup` — never every action
+regardless of fit.
 
 ## Answering open-ended questions
 
@@ -304,7 +261,7 @@ queue's file overlap, naming specific PRs and paths.
   watch.
 - Never report a `needs-review` entry with just the label name — step 5's diagnosis
   runs every time.
-- Don't default to oldest-first. In the main queue Dependabot PRs get no special formatting; the Dependabot queue is its own mode, asked for by name.
+- Don't default to oldest-first.
 
 ## Verification
 
@@ -330,8 +287,9 @@ queue's file overlap, naming specific PRs and paths.
 - Confirm a closing issue's `release-critical` label is cited when present, and that
   the PR's own labels are never checked for it.
 - Confirm every PR/issue number in a real answer is a working link.
-- Ask about `workflow-approval-required` PRs: confirm they're named separately with
-  "no tool here can approve this."
+- Ask about `workflow-approval-required` PRs: confirm they're named separately,
+  each with its real approval-page link from `actions_list`, and that posting the
+  approval itself is still named as the maintainer's own, in-browser action.
 - Re-run the same queue twice with no repo-state change: confirm stable output.
 - Pick two PRs touching the same `api/**` path: confirm the generated-file conflict
   is called out explicitly.
@@ -350,12 +308,3 @@ queue's file overlap, naming specific PRs and paths.
   `milestone_due_on` is cited as the reason the first ranks earlier.
 - Pick a large PR (many files/additions) vs. a tiny one: confirm `size` is named
   as a review-effort signal, not silently ignored.
-- Ask "which Dependabot PRs should I merge": confirm the fetch is by author (an
-  unlabelled Dependabot PR still appears), and every PR lands under exactly one verdict.
-- Pick two PRs bumping the same dependency: confirm they're presented as one decision.
-- Pick a major bump: confirm it lands under "Your review" with real call sites cited,
-  never "Merge now".
-- Pick a PR whose Copilot verdict isn't approving: confirm the findings are read and
-  classed as blocking or advisory, not just the verdict name.
-- Pick a batch of "Merge now" PRs all touching `go.mod`: confirm one note about
-  sequential merging, not a conflict reported per pair.

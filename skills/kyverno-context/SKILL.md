@@ -36,7 +36,12 @@ be repointed at a different repo, and a stale answer from one is actively wrong 
 another.
 
 1. **Labels**: `list_label(owner, repo)`, held for the rest of the session. Never
-   assume a label exists without having seen it here.
+   assume a label exists without having seen it here. Each label carries its own
+   real `description` — read that for what a label actually means, never guess from
+   the name (e.g. `triage` describes itself as the default every new issue gets, not
+   an absence of labelling; the label whose description reads like "further
+   information requested" is the real "needs more info" marker, whatever it's named
+   on a given repo).
 2. **CODEOWNERS**: `get_file_contents(path="CODEOWNERS")`, parsed as ordered
    `(path-pattern, owner)` pairs. To find who owns a path, walk the lines in file
    order and keep the *last* match — GitHub's rule is last-match-wins, not

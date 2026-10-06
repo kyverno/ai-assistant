@@ -125,8 +125,11 @@ mcp_servers:
       # Actions using the maintainer's own token — label, comment, review,
       # rebase, and requesting a Copilot review if one's missing. issue_write
       # is broader than "just labels" (can also touch state/assignees/
-      # milestone) — SOUL.md/pr-actions instruct the agent to only ever pass
-      # `labels` on it.
+      # milestone/method="create") — pr-actions self-restricts to `labels`
+      # only, since its number is always a PR's; issue-actions (real issues)
+      # carries no such restriction and uses the full tool, including
+      # method="create" to raise a new issue — no separate create_issue tool
+      # exists.
       #
       # Discussions (skills/discussions) — read + reply to contributor
       # discussions. discussion_comment_write is multiplexed (add/reply/

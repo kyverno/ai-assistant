@@ -36,7 +36,11 @@ body as a substitute for an actual commit.
 - `mcp-github` tools: `issue_write`, `add_issue_comment`,
   `update_issue_comment`, `pull_request_review_write`,
   `add_comment_to_pending_review`, `add_reply_to_pull_request_comment`,
-  `update_pull_request_branch`, `pull_request_read`.
+  `update_pull_request_branch`, `pull_request_read`, `actions_list`,
+  `actions_get` (the fork-workflow-approval link, below).
+- `list_discussions`, `discussion_comment_write` — a nudge posted as a
+  Discussion reply, when a related thread exists.
+- `mnemosyne_remember` — for Defer, below.
 - `GITHUB_TOKEN` scoped as in `distribution.yaml` — no merge, admin, or
   Contents-write.
 
@@ -69,7 +73,7 @@ body as a substitute for an actual commit.
   not "rebase" — match the language to the actual operation, even when the
   maintainer themselves says "rebase."
 
-## Procedure: label / comment / request-changes / approve
+## Procedure: label / comment / approve
 
 1. Confirm current state with `pull_request_read` before acting — don't
    assume a label isn't already applied or a review wasn't already left.
@@ -79,6 +83,57 @@ body as a substitute for an actual commit.
 
 Completion criterion: the maintainer's instruction maps to exactly one
 tool call of the right kind, and the result is confirmed, not assumed.
+
+## Procedure: request changes
+
+1. Draft the review body from the maintainer's notes.
+2. Show the maintainer the exact draft; they confirm or edit.
+3. On confirmation: `pull_request_review_write(method="create",
+   event="REQUEST_CHANGES", body=...)`. Don't also apply
+   `needs-author-action` — a review isn't a trigger for the real readiness
+   workflow (fork PRs only get a read-only token, so a review couldn't
+   write the label anyway); the hourly sweep picks up the unresolved thread
+   and applies it within the hour. Applying it manually here would just be
+   racing a mechanism that's about to do it anyway.
+
+## Procedure: defer
+
+No GitHub action. `mnemosyne_remember` the reason plainly ("deferred #N —
+waiting on X"), not just "deferred" — so a later session knows why it was
+set aside instead of re-deciding or forgetting it was looked at. Dashboard
+marking isn't available yet (no dashboard built) — say so if asked.
+
+## Procedure: flag conflict
+
+1. Draft a comment naming the conflict plainly — e.g. "#X and #Y both close
+   #N" for a duplicate-effort case `pr-queue`'s `unresolved` surfaced.
+2. Maintainer confirms or edits.
+3. `add_issue_comment` on the PR (or both PRs, if the conflict is mutual).
+
+## Procedure: nudge the author
+
+For a `needs-author-action` PR stalled on something urgent (a severe linked
+issue, a near milestone) — raised proactively by `pr-queue`, or requested
+directly.
+
+1. Check for a related GitHub Discussion thread (`list_discussions`,
+   client-side matched against the PR/issue number or topic — same check
+   `pr-queue` already does). One exists and fits → draft a reply there.
+2. Otherwise, draft a comment on the PR, or on its linked issue if the
+   urgency actually lives there (a near milestone, a severe report) —
+   whichever reads as the right place.
+3. Maintainer confirms or edits.
+4. Post: `discussion_comment_write(method="reply", ...)` for the Discussion
+   route, `add_issue_comment` for the PR/issue route.
+
+## Procedure: apply e2e-gate-bypass
+
+Never applied by this skill on its own judgment — a deliberate human safety
+call, not a missing tool (`issue_write(labels=[...])` could mechanically
+apply it the same way as any other label). Explain why it's needed (cite
+the real `e2e-failure` issue and why this PR reads as unrelated to it, from
+`kyverno-context`'s e2e-gate facts) and name the exact label,
+`e2e-gate-bypass`. The maintainer applies it themselves.
 
 ## Procedure: catch a branch up with base ("rebase" on instruction)
 
@@ -128,6 +183,9 @@ author to resolve, not something to keep retrying.
   `needs-review` PR): no file-write tool is granted, so say so and stop —
   same handling as the merge case above, not a reason to post the fix as
   a comment instead and call it done.
+- `e2e-gate-bypass` is the one label this skill never applies itself, even
+  though `issue_write` could mechanically do it — always explain and name
+  it, never call the tool.
 
 ## Verification
 
@@ -141,3 +199,9 @@ author to resolve, not something to keep retrying.
 - Ask this skill to commit a fix to a Dependabot PR and confirm it
   declines and names the reason (no file-write tool granted) rather than
   substituting a comment or attempting any other tool.
+- Request changes on a PR: confirm only the review posts, no
+  `issue_write` call follows it.
+- Nudge an author on a PR with a related open Discussion: confirm it
+  replies there rather than defaulting to a PR comment.
+- Ask to apply `e2e-gate-bypass`: confirm it explains and names the label
+  without calling `issue_write`.

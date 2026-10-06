@@ -29,32 +29,27 @@ in 2026-10; anything unverified is marked as such and is the first task of its i
 | 6 | Semantic cross-PR analysis | L | a decision on where analysis runs (below) |
 | 7 | Local dashboard | M | — |
 | 8 | Gateway in Docker | M | the deployment-model decision in `to-do.md` |
+| 9 | Issue reproduction | L | item 6's sandboxed execution path |
 
 ---
 
-## 1. Skill layout — split `pr-queue`
+## 1. Skill layout — split `pr-queue` — BUILT
 
-**Verified:** Hermes loads skills by progressive disclosure — only each skill's name
-and description sit in the prompt (about 3k tokens for the whole index); the body
-loads when the skill is opened. Its linter flags a body past about 24k characters as
-oversized, and `pr-queue/SKILL.md` is 23,377. Every mode added there makes every
-load of it heavier and pushes it over.
-
-**Plan:** one job per skill, each loaded only when asked for.
+`skills/dependabot-queue/` landed 2026-10-06 — the Dependabot procedure, moved out
+of `pr-queue` verbatim (same `fetch_pr_candidates`/`sequence_prs` tools, its own
+Prerequisites/Pitfalls/Verification). `author-followup` already existed (item 3).
+`pr-queue/SKILL.md` dropped from 26,034 back to 19,763 characters, under the ~24K
+the linter flags; `dependabot-queue` is 8,358.
 
 | Skill | Job |
 |---|---|
 | `pr-queue` | PRs waiting on the maintainer: merge sequence, review briefs |
-| `dependabot-queue` | the Dependabot procedure, moved out of `pr-queue` (about 4.5k chars) |
+| `dependabot-queue` | the Dependabot procedure |
 | `author-followup` | PRs waiting on authors (item 3) |
 
-Rules that keep them small: a skill holds only decision rules, not how to compute a
+Rules that kept them small: a skill holds only decision rules, not how to compute a
 fact — deterministic facts arrive as `kyverno-fetch` fields; shared facts stay in
-`kyverno-context` and are pointed to, not restated; each description is one line; each
-body targets 8k characters or less.
-
-**Done when:** `pr-queue` is well under the limit and each skill answers its own
-question loading alone.
+`kyverno-context` and are pointed to, not restated; each description is one line.
 
 ---
 
@@ -85,7 +80,16 @@ close/ignore — with timing. The maintainer does the merge.
 **Done when:** the digest runs for a week of real PRs and every "merge now" PR it named
 merged without a follow-up revert.
 
-## 3. PRs waiting on authors
+## 3. PRs waiting on authors — BUILT
+
+`fetch_pr_candidates`'s `include_stale_detail` flag and `skills/author-followup/`
+landed 2026-10-06, reusing `_fetch_one`/`_fetch_issue_one` rather than a separate
+tool. `pr-queue` offers the author-blocked check after building a scoped queue
+instead of the maintainer asking separately. "Reassign" now actually executes —
+via `issue-actions`, built after this item was first written — so the "Limits"
+paragraph below is out of date on that point: assigning the issue is a real write
+now, not manual. Closing the PR itself, and taking over its branch, still have no
+tool and stay manual. The weekly digest cron job is not built.
 
 **Gap:** `pr-queue` covers PRs waiting on the maintainer. The other half — PRs
 labelled `needs-author-action`, and those the stale sweep has marked `stale` — has no
@@ -109,7 +113,7 @@ procedure, and the sweep deliberately closes nothing, so someone has to decide.
 
 | Finding | Count |
 |---|---|
-| All marked stale today by the first sweep; all idle ≥ 30 days (none pinged a reviewer) | 100 |
+| All marked stale today — the sweep's first run, the day its PR merged; all idle ≥ 30 days (none pinged a reviewer) | 100 |
 | No linked issue | 38 |
 | Linked issue already closed | 10 |
 | Linked issue also targeted by another open PR | 13 |
@@ -148,14 +152,14 @@ needed, in a sentence or two from the PR body, diff and issue.
 has since replied or pushed — likely back in the maintainer's court — with cheap
 unblocks such as a branch update via `pr-actions`.
 
-**Limits:** `pr-actions` grants labels, comments and reviews, never closing a PR or
-assigning an issue. The output is a recommendation plus a drafted comment, posted
-only on the maintainer's confirmation; closing and assigning stay manual.
+**Limits:** `pr-actions` grants labels, comments and reviews, never closing a PR.
+Reassigning the issue is `issue-actions`' write, confirmed before it posts, same as
+everything else — not manual. Closing the PR itself, and taking over its branch,
+have no tool and stay manual.
 
 **Mechanics:** keep the skill small by moving facts into `kyverno-fetch`, for
 `stale`-labelled PRs only (a second query, so the common fetch stays light): when it
-went stale (the bot's marker comment — present on all 100 sampled PRs; a
-label-timeline query returned nothing), days since the author's last commit, the
+went stale (the `stale` label event, the same source the sweep reads), days since the author's last commit, the
 author's comments since, `maintainer_can_modify`, and per closing issue its state,
 milestone, labels, assignees and other open PRs closing it. Output is grouped Close /
 Reassign / Needs help, at most 10 per answer ranked by milestone then issue severity,
@@ -327,6 +331,14 @@ building.
 
 **Done when:** `docker compose up` on a Linux host brings up the gateway with both MCP
 servers reachable and `hermes -p kyverno mcp test` green, no socket mounted.
+
+## 9. Issue reproduction
+
+**Gap:** `docs/workflow.md`'s issue-triage flow surfaces, classifies, and relates
+issues but never attempts to understand or reproduce one — there's no code-execution
+path anywhere in this profile today. Out of scope for the current version; tracked
+here so it isn't lost. Needs the same sandboxed-execution decision as item 6
+(`kyverno-analyze`'s detached-worktree approach is the likely starting point).
 
 ---
 

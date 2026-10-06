@@ -87,6 +87,16 @@ per-profile under `~/.hermes/profiles/<profile>/plugins/<name>/`.
   fetches each PR's real diff for one file on demand — raw patches only, no computed
   conflict verdict (two PRs' hunk line numbers are relative to different merge-bases with
   `main`, so comparing them numerically isn't reliable; the agent reads the content itself).
+  `fetch_issue_candidates(repo, search_query, limit)` does the same shape for issues:
+  a search pass plus a concurrent per-issue detail pass. Returns per issue: labels,
+  assignees, milestone, `comment_count`/`recent_comments`, `closing_prs` (every PR whose
+  body/commits name a closing keyword for this issue, via GitHub's own
+  `closedByPullRequestsReferences` — resolves multiple competing PRs against one issue
+  without a body-text regex), and `closed_by`/`reopened_since_closed` (the timeline's
+  actual closer — PR number or commit — and whether a reopen followed, from
+  `timelineItems`). Verified live against `kyverno/kyverno` (2026-10-05): both
+  `closedByPullRequestsReferences` and `ClosedEvent.closer`'s `PullRequest`/`Commit`
+  union resolve correctly end to end, not just by schema introspection.
 - **`kyverno-sequencer`** — `sequence_prs` takes that richer metadata and builds a hard
   dependency graph, no scoring: 4 edge types (stacked branches — one PR's base branch is
   another's head; generated-file input-before-output; an explicit body reference to another

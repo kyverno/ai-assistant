@@ -39,6 +39,21 @@ pass "docker is running"
 
 step "2. Profile install"
 
+# The update below resets config.yaml; remember the model the maintainer picked
+# (hermes -p $PROFILE model) so step 3 can put it back.
+cfg_get() {
+  local v
+  v=$(hermes -p "$PROFILE" config get "$1" 2>/dev/null </dev/null)
+  case "$v" in "Config key not set"*) v="" ;; esac
+  printf '%s' "$v"
+}
+PREV_PROVIDER=""
+PREV_MODEL=""
+if [ -d "$PROFILE_DIR" ]; then
+  PREV_PROVIDER=$(cfg_get model.provider)
+  PREV_MODEL=$(cfg_get model.default)
+fi
+
 if [ -d "$PROFILE_DIR" ]; then
   info "profile '$PROFILE' already installed — pulling in any repo changes (skills, config.yaml,"
   info "plugins/, cron) since the last install/update..."
@@ -125,15 +140,25 @@ if [ -z "$LLM_PROVIDER" ]; then
 fi
 pass "all required credentials are filled in ($ENV_FILE)"
 
-# Profile updates reset config.yaml to the Anthropic default, so re-pin the
-# provider here on every run.
+# Default model per provider; a model the maintainer already picked for the same
+# provider wins. Any model the provider offers is selectable: hermes -p $PROFILE model
 if [ "$LLM_PROVIDER" = "copilot" ]; then
-  hermes -p "$PROFILE" config set model.provider copilot >/dev/null 2>&1 \
-    && hermes -p "$PROFILE" config set model.default claude-sonnet-4.6 >/dev/null 2>&1 \
-    && pass "model provider: GitHub Copilot (claude-sonnet-4.6)" \
-    || fail "couldn't set the Copilot provider — run: hermes -p $PROFILE config set model.provider copilot"
+  MODEL="claude-sonnet-4.6"
+  [ "$PREV_PROVIDER" = "copilot" ] && [ -n "$PREV_MODEL" ] && MODEL="$PREV_MODEL"
+  if hermes -p "$PROFILE" config set model.provider copilot >/dev/null 2>&1 \
+    && hermes -p "$PROFILE" config set model.default "$MODEL" >/dev/null 2>&1; then
+    pass "model: GitHub Copilot / $MODEL (change: hermes -p $PROFILE model)"
+  else
+    fail "couldn't set the Copilot provider — run: hermes -p $PROFILE model"
+  fi
 else
-  pass "model provider: Anthropic (claude-sonnet-4-6)"
+  MODEL="anthropic/claude-sonnet-4-6"
+  if [ -z "$PREV_PROVIDER" ] || [ "$PREV_PROVIDER" = "anthropic" ]; then
+    [ -n "$PREV_MODEL" ] && MODEL="$PREV_MODEL"
+    [ -n "$PREV_PROVIDER" ] && hermes -p "$PROFILE" config set model.provider anthropic >/dev/null 2>&1
+    hermes -p "$PROFILE" config set model.default "$MODEL" >/dev/null 2>&1
+  fi
+  pass "model: Anthropic / $MODEL (change: hermes -p $PROFILE model)"
 fi
 
 # Hermes only substitutes ${HERMES_SKILL_DIR}/${HERMES_SESSION_ID} in SKILL.md
