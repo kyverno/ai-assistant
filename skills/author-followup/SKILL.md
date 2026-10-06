@@ -86,6 +86,9 @@ milestone-tracked issue. No fetch happens until something is picked.
    never just "needs help" with no one named.
 5. Every recommendation states what the PR would have achieved and whether that's
    still needed, from the body/diff/issue — never a bare verdict with no reason.
+6. **After writing the answer, push to the dashboard** — items (verdict rescue / decide /
+   close, `draft` for any close or nudge comment), then the `stale` view, and the
+   one-line note (`dashboard-sync`).
 
 ## Procedure: needs-author-action status (on request, before staling)
 
@@ -110,7 +113,7 @@ author reply or push since — flag those as likely back in the maintainer's cou
 - **Something else**: offer whichever of the above actually fits, not a fixed
   list — same pattern as a PR review brief's deep-dive menu.
 
-Whatever gets decided, check what it unblocks and offer that next — a reassigned
+Log each executed decision with `update_dashboard` (`actions`), then check what it unblocks and offer that next — a reassigned
 issue may now be worth re-triaging, a closed PR may free up a milestone issue
 `issue-triage` should revisit.
 

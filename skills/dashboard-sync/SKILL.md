@@ -25,12 +25,15 @@ name. `update_dashboard`'s own description carries the field shapes.
 
 ## Procedure: push a presentation
 
-1. `section: "items"` — one item per PR, issue, or Discussion you showed:
-   `key`, `title`, `url`, `status`, state chips, `verdict` (`action` + `reason`),
-   `needs_you`, `threads`, and `related` for every related PR/issue — plural,
-   competing PRs included. Include `draft` when a comment awaits confirmation.
-   Send what you told the maintainer, condensed — same verdict, same reasons —
-   not raw fetch output.
+Write the answer first, then push. Keep the call small — it costs tokens.
+
+1. `section: "items"` — only items that need a decision, ranked by how much they need
+   the maintainer, at most about 20 (a 165-PR sweep sends its top ~20). Per item: `key`,
+   `title`, `url`, `status`, `verdict` (`action` + `reason`), `needs_you`, and `related`
+   for every related PR/issue — plural, competing PRs included. Add state chips or
+   `threads` only when you already have them, and `draft` when a comment awaits
+   confirmation. Same verdict and reasons as the answer, never raw fetch output.
+   Skip items unchanged since the last push.
 2. `section: "views"` — the ordered list the maintainer saw, items sent first:
 
    | Presentation | `name` | `groups` / `entries[].group` |
@@ -41,8 +44,10 @@ name. `update_dashboard`'s own description carries the field shapes.
    | Discussions | `discussions` | needs a decision, active, informational |
 
    A single-PR brief sends items only.
-3. `section: "session"` — `focus`, `milestone`, `milestone_due`, `gate`,
-   `counts` whenever they are known.
+3. `section: "session"` — `focus`, `milestone`, `milestone_due`, `gate`, `counts`, only
+   when they changed.
+4. End the reply with one line, e.g. "Added 12 items to your dashboard (Kyverno tab) —
+   open it to review."
 
 ## Procedure: log an action
 
@@ -52,7 +57,7 @@ Only after the write landed, never for a draft:
    nudged, closed, labeled, deferred), a one-line `summary`, and `link` to the
    comment, review, or issue the write produced.
 2. Re-send the item: `draft` emptied, `verdict.action` set to `done` when the
-   decision resolved it.
+   decision resolved it. No closing line beyond the confirmation already given.
 
 ## Pitfalls
 

@@ -173,7 +173,8 @@ for just those 10. State the slice size against the digest's own `total_count`.
    `list_discussions` always (client-side matched, no search exists) — for a
    thread naming the bot, a PR, or its topic. Cite and apply as in step 4's
    within-tier rule.
-7. **Produce one ordered list**, tier by tier. Every position — human or Dependabot —
+7. **Produce one ordered list**, tier by tier, then push it to the dashboard
+   (`dashboard-sync`: items, then the `queue` view) and close with its one-line note. Every position — human or Dependabot —
    renders identically (Output format below): no separate section, no bolded
    verdict styling that singles one kind out.
 8. **Offer the author-blocked check for this same scope** — `fetch_pr_candidates(...,
@@ -212,6 +213,8 @@ Long form (asked for, or a signal below is concerning) adds:
 - Suggested action (approve / request changes / wait on CI / needs author to resolve
   threads / proceed but flagged as high post-merge risk), stated with its reason.
   Before drafting, `mnemosyne_recall` for durable notes on this PR's author.
+
+After writing the brief, push this PR's item to the dashboard (`dashboard-sync`).
 
 **Offer to execute the suggestion in the same turn** — "want me to approve this
 now?" not a separate ask the maintainer has to come back for. Short-form offers

@@ -73,6 +73,9 @@ body as a substitute for an actual commit.
   not "rebase" — match the language to the actual operation, even when the
   maintainer themselves says "rebase."
 
+Every action below ends with `update_dashboard` (`actions`, with the link the write
+produced) once it has landed — part of the action, not a follow-up.
+
 ## Procedure: label / comment / approve
 
 1. Confirm current state with `pull_request_read` before acting — don't
@@ -100,8 +103,8 @@ tool call of the right kind, and the result is confirmed, not assumed.
 
 No GitHub action. `mnemosyne_remember` the reason plainly ("deferred #N —
 waiting on X"), not just "deferred" — so a later session knows why it was
-set aside instead of re-deciding or forgetting it was looked at. Dashboard
-marking isn't available yet (no dashboard built) — say so if asked.
+set aside instead of re-deciding or forgetting it was looked at. Log it on the
+dashboard as `deferred`.
 
 ## Procedure: flag conflict
 

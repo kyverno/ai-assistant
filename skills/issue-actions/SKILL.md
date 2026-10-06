@@ -61,6 +61,10 @@ a PR's ends `/pull/<N>`. Read that before any `issue_write` call carrying
 `/pull/`, say so plainly and stop — don't let `issue_write` touch a PR's state.
 `pr-actions` is the only skill that acts on a PR.
 
+Every action below, including raising an issue, ends with `update_dashboard` (`actions`,
+with the link the write produced) once it has landed — part of the action, not a
+follow-up.
+
 ## Procedure: per-decision actions
 
 Each is draft-then-confirm except where noted; show the maintainer the exact text

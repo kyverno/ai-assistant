@@ -67,7 +67,8 @@ does.
 1. `get_discussion` for the body, `get_discussion_comments` (with
    `includeReplies: true` if the thread has replies worth reading) for the
    existing conversation — read the whole thread before drafting, not just
-   the original post.
+   the original post. After answering, push the thread's item to the
+   dashboard (`needs_you` = the decision pending; `dashboard-sync`).
 2. If the question touches the codebase, cross-reference with `search_code`
    (repo docs, relevant symbols) or `search_issues` (related issues/PRs) —
    cite what was actually found, same rule as `pr-queue`'s open-ended
@@ -82,7 +83,8 @@ does.
 4. On confirmation, post via `discussion_comment_write`: `method="add"` for
    a new top-level comment, `method="reply"` when responding to a specific
    existing comment (get its `commentNodeID` from step 1's
-   `get_discussion_comments` call first).
+   `get_discussion_comments` call first), then log it with `update_dashboard`
+   (`actions`).
 5. If the answer covers a genuinely new, durable point (not something
    already `recall`ed in step 2), `mnemosyne_remember` it — a one-line
    summary of the question pattern plus the answer, so a similar future

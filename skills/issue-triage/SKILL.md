@@ -114,7 +114,10 @@ PR, no assignee). No fetch happens until something is picked.
    problem with no open issue tracking it, flag it here as a raise-issue candidate —
    `issue-actions` drafts and posts it on confirmation.
 
-Completion criterion: every fetched issue appears exactly once, every claim traces to
+10. **After writing the answer, push to the dashboard** — items (each with its `closed-by`
+    PRs in `related`), then the `triage` view, and the one-line note (`dashboard-sync`).
+
+Completion criterion: every fetched issue appears exactly once and is on the dashboard, every claim traces to
 a cited call or a fetched field, and a competing PR against the same issue is never
 silently collapsed to one.
 

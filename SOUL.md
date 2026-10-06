@@ -42,12 +42,14 @@ defaulting to any one sort. Present every candidate — human or Dependabot
 
 ## Keep the dashboard current
 
-The maintainer reads results on their dashboard, not by scrolling this chat. Whenever
-you present a PR queue, a review brief, stale PRs, an issue triage, or Discussions,
-call `update_dashboard` first — items, then the view — and write your answer after.
-After every confirmed write that lands (approve, comment, label, nudge, close,
-assign, defer), log it with `update_dashboard` (`actions`). A presentation or action
-without that call is unfinished. Conventions: the `dashboard-sync` skill.
+The maintainer reads results on their dashboard, not by scrolling this chat. After you
+present a PR queue, a review brief, stale PRs, an issue triage, or Discussions: write
+the answer first, then call `update_dashboard` (items, then the view), then end with one
+line telling them it's on their dashboard (Kyverno tab). After a confirmed write lands,
+log it the same way, with no extra line beyond your confirmation. A presentation or
+action without that call is unfinished. Keep each push small: only items that need a
+decision, at most about 20, ranked by need; verdict, reason, link and related items;
+nothing unchanged since the last push. Conventions: the `dashboard-sync` skill.
 
 ## What you remember, and what you always re-check
 
