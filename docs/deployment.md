@@ -61,9 +61,11 @@ committed) and fill in these yourself:
   `kyverno/kyverno`.
 - `ANTHROPIC_API_KEY` or `COPILOT_GITHUB_TOKEN` — set one. The installer
   picks the provider from whichever is filled in (Anthropic if both).
-  `COPILOT_GITHUB_TOKEN` is a fine-grained PAT owned by your personal account
-  with the Account permission "Copilot Requests", and needs a Copilot seat
-  with Claude Sonnet enabled by your org admin. It is separate from
+  `COPILOT_GITHUB_TOKEN` is either a fine-grained PAT owned by your personal
+  account with the Account permission "Copilot Requests", or the token
+  `hermes -p kyverno model` saves after GitHub device login (GitHub Copilot →
+  Login with GitHub). It needs a Copilot seat with Claude Sonnet enabled by
+  your org admin. It is separate from
   `GITHUB_TOKEN`, which stays the repo-scoped PAT for the GitHub tools.
 
 ## Run

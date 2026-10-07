@@ -93,6 +93,90 @@ if [ ! -f "$ENV_FILE" ]; then
   fi
 fi
 
+# --- Interactive credential prompts (skipped when stdin/stdout isn't a terminal) ---
+INTERACTIVE=0
+[ -t 0 ] && [ -t 1 ] && INTERACTIVE=1
+
+env_get() {
+  ENV_FILE="$ENV_FILE" KEY="$1" python3 -c "
+import os
+key = os.environ['KEY']
+for line in open(os.environ['ENV_FILE']):
+    line = line.strip()
+    if line and not line.startswith('#') and '=' in line:
+        k, _, v = line.partition('=')
+        if k.strip() == key:
+            print(v.strip())
+            break
+"
+}
+
+env_set() {
+  ENV_FILE="$ENV_FILE" KEY="$1" VALUE="$2" python3 -c "
+import os
+path, key, value = os.environ['ENV_FILE'], os.environ['KEY'], os.environ['VALUE']
+lines = open(path).read().splitlines()
+for i, line in enumerate(lines):
+    if line.split('=', 1)[0].strip() == key and not line.lstrip().startswith('#'):
+        lines[i] = f'{key}={value}'
+        break
+else:
+    lines.append(f'{key}={value}')
+open(path, 'w').write('\\n'.join(lines) + '\\n')
+"
+}
+
+# prompt_for KEY "prompt" [secret]: asks only if KEY is empty; Enter skips.
+prompt_for() {
+  local key="$1" prompt="$2" secret="${3:-}" reply=""
+  [ -n "$(env_get "$key")" ] && return 0
+  if [ -n "$secret" ]; then
+    read -r -s -p "  $prompt" reply </dev/tty
+    echo
+  else
+    read -r -p "  $prompt" reply </dev/tty
+  fi
+  [ -n "$reply" ] && env_set "$key" "$reply"
+  return 0
+}
+
+if [ "$INTERACTIVE" = 1 ]; then
+  info "Press Enter at any prompt to skip it and fill it in $ENV_FILE yourself."
+  prompt_for GITHUB_TOKEN "GitHub token (fine-grained PAT, see README step 2): " secret
+  prompt_for MAINTAINER_GITHUB_LOGIN "Your GitHub username: "
+  prompt_for KYVERNO_REPO "Repo to manage (owner/repo): "
+
+  if [ -z "$(env_get ANTHROPIC_API_KEY)" ] && [ -z "$(env_get COPILOT_GITHUB_TOKEN)" ]; then
+    info ""
+    info "Model provider:"
+    info "  1) Anthropic API key"
+    info "  2) GitHub Copilot, sign in with GitHub (device login)"
+    info "  3) GitHub Copilot, paste a PAT"
+    info "  4) Skip for now"
+    read -r -p "  Choice [1-4]: " PROVIDER_CHOICE </dev/tty
+    case "$PROVIDER_CHOICE" in
+      1) prompt_for ANTHROPIC_API_KEY "Anthropic API key: " secret ;;
+      2)
+        info "Choose GitHub Copilot, then Login with GitHub, and enter the code it shows."
+        hermes -p "$PROFILE" model </dev/tty
+        [ -z "$(env_get COPILOT_GITHUB_TOKEN)" ] && info "no Copilot token was saved — re-run this script to try again"
+        ;;
+      3) prompt_for COPILOT_GITHUB_TOKEN "Copilot PAT: " secret ;;
+    esac
+  fi
+
+  if [ -z "$(env_get SLACK_BOT_TOKEN)" ] && [ -z "$(env_get SLACK_APP_TOKEN)" ]; then
+    info ""
+    read -r -p "  Set up Slack now? (README step 3) [y/N]: " SLACK_CHOICE </dev/tty
+    if [[ "$SLACK_CHOICE" =~ ^[Yy] ]]; then
+      prompt_for SLACK_BOT_TOKEN "Slack bot token (xoxb-...): " secret
+      prompt_for SLACK_APP_TOKEN "Slack app-level token (xapp-...): " secret
+      prompt_for SLACK_ALLOWED_USERS "Your Slack member ID: "
+      prompt_for SLACK_HOME_CHANNEL "Maintainers channel ID: "
+    fi
+  fi
+fi
+
 MISSING=$(python3 -c "
 import re, sys, yaml
 manifest = yaml.safe_load(open('distribution.yaml'))
@@ -105,7 +189,8 @@ with open('$ENV_FILE') as f:
             continue
         k, _, v = line.partition('=')
         values[k.strip()] = v.strip()
-missing = [name for name in required if not values.get(name)]
+slack_on = bool(values.get('SLACK_BOT_TOKEN') or values.get('SLACK_APP_TOKEN'))
+missing = [n for n in required if not values.get(n) and (slack_on or not n.startswith('SLACK_'))]
 print(' '.join(missing))
 ")
 
@@ -135,6 +220,9 @@ if [ -z "$LLM_PROVIDER" ]; then
   info ""
   info "Fill one in, then re-run this script:"
   info "  \$EDITOR $ENV_FILE"
+  info ""
+  info "For GitHub Copilot you can skip the PAT and sign in with device login instead:"
+  info "  hermes -p $PROFILE model     # GitHub Copilot → Login with GitHub"
   info "  ./scripts/install.sh $PROFILE"
   exit 0
 fi

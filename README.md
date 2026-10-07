@@ -25,9 +25,7 @@ Slack. There is no server to run and no webhook receiver.
 ```bash
 git clone https://github.com/kyverno/ai-assistant.git
 cd ai-assistant
-./scripts/install.sh      # first run installs, then tells you which credentials to fill in
-$EDITOR ~/.hermes/profiles/kyverno/.env
-./scripts/install.sh      # second run verifies everything
+./scripts/install.sh      # installs, prompts for your credentials, then verifies everything
 kyverno chat
 ```
 
@@ -41,10 +39,17 @@ You need Docker, the Hermes CLI, a GitHub token and a model provider. The detail
 |---|---|
 | [Docker](https://docs.docker.com/get-docker/) | Must be running. The GitHub and Slack tools each run as their own container. |
 | [Hermes CLI](https://hermes-agent.nousresearch.com) | On your `PATH`. |
-| A model provider | **Either** an Anthropic API key, **or** a GitHub Copilot seat with Claude Sonnet enabled plus a fine-grained PAT (see below). |
+| A model provider | **Either** an Anthropic API key, **or** a GitHub Copilot seat with Claude Sonnet enabled (see below). |
 
-For the Copilot route, the PAT must be owned by your **personal** account (not an org) and have the
-Account permission **Copilot Requests**. It is a separate token from the GitHub token in step 2.
+For the Copilot route, sign in with GitHub's device flow or supply a PAT. Either way the credential
+belongs to your **personal** account (not an org) and is separate from the GitHub token in step 2.
+
+- **Device login (easiest):** run `hermes -p kyverno model`, choose **GitHub Copilot**, then
+  **Login with GitHub**. Enter the displayed code at `github.com/login/device`. The token is saved
+  to the profile's `.env` as `COPILOT_GITHUB_TOKEN`. Run this after the first
+  `./scripts/install.sh` has created the profile.
+- **PAT:** a fine-grained token with the Account permission **Copilot Requests**, pasted into
+  `COPILOT_GITHUB_TOKEN`.
 
 ### 2. GitHub token
 
@@ -102,18 +107,23 @@ the **same Slack workspace**.
 
 The script is idempotent: re-run it as often as you like and it only does what is left.
 
-1. **First run:** installs the profile, then stops and lists the credentials to fill in at
-   `~/.hermes/profiles/kyverno/.env` (copied from `.env.example`).
-2. **Fill in the `.env`**, then run the script again. It installs the messaging gateway (only if
-   Slack is configured), checks that the GitHub and Slack tools are reachable and the hooks are
-   approved, and prints ✓ or ✗ for each check.
+1. **Install and prompts:** installs the profile, then asks for each missing credential (GitHub
+   token, username, repo), lets you pick a model provider (Anthropic key, Copilot device login, or
+   Copilot PAT), and asks whether to set up Slack. Values are saved to
+   `~/.hermes/profiles/kyverno/.env`. Press Enter at any prompt to skip it.
+2. **Checks:** installs the messaging gateway (only if Slack is configured), checks that the GitHub
+   and Slack tools are reachable and the hooks are approved, and prints ✓ or ✗ for each check.
+
+If you skipped a prompt, the script stops and lists what is missing. Fill it in at the `.env`
+(created from the profile's `.env.EXAMPLE`) and re-run. When the script isn't run in a terminal, it
+skips the prompts and works this way from the start.
 
 | Variable | Required | Purpose |
 |---|---|---|
 | `GITHUB_TOKEN` | yes | Token from step 2 |
 | `MAINTAINER_GITHUB_LOGIN` | yes | Your GitHub username |
 | `KYVERNO_REPO` | yes | `owner/repo` the assistant manages (default `kyverno/kyverno`) |
-| `ANTHROPIC_API_KEY` or `COPILOT_GITHUB_TOKEN` | one of | Model provider |
+| `ANTHROPIC_API_KEY` or `COPILOT_GITHUB_TOKEN` | one of | Model provider (device login fills in `COPILOT_GITHUB_TOKEN` for you) |
 | `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN` | Slack only | Bot and app-level tokens |
 | `SLACK_ALLOWED_USERS` | Slack only | Your Slack member ID |
 | `SLACK_HOME_CHANNEL` | Slack only | Maintainers channel ID |

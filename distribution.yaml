@@ -31,5 +31,5 @@ env_requires:
     description: "Anthropic API key. Set this or COPILOT_GITHUB_TOKEN (at least one)."
     required: false
   - name: COPILOT_GITHUB_TOKEN
-    description: "Fine-grained PAT owned by your personal account with the Copilot Requests permission. Set this or ANTHROPIC_API_KEY (at least one)."
+    description: "Fine-grained PAT owned by your personal account with the Copilot Requests permission, or the token saved by `hermes -p kyverno model` device login. Set this or ANTHROPIC_API_KEY (at least one)."
     required: false
