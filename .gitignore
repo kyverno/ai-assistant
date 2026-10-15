@@ -11,3 +11,4 @@ github-app-private-key*.pem
 __pycache__/
 *.pyc
 .venv/
+docs/spikes
