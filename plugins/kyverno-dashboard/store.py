@@ -70,9 +70,21 @@ def _save(state: Dict[str, Any]) -> None:
 
 def _check_key(key: Any) -> str:
     kind, _, num = str(key).partition(":")
-    if kind not in KINDS or not num.strip():
+    kind, num = kind.strip().lower(), num.strip().lstrip("#").strip()
+    if kind not in KINDS or not num:
         raise ValueError(f"item key must look like 'pr:123' / 'issue:45' / 'discussion:6', got {key!r}")
-    return f"{kind}:{num.strip()}"
+    # 'pr:#07' and 'pr:7' are the same item: never let spelling create a second card
+    return f"{kind}:{num.lstrip('0') or '0'}" if num.isdigit() else f"{kind}:{num}"
+
+
+def _merge_related(old: List[Any], new: List[Any]) -> List[Dict[str, Any]]:
+    """Edges are identified by (key, rel); a re-send updates them and keeps the ones not re-sent."""
+    out: Dict[Any, Dict[str, Any]] = {}
+    for r in list(old or []) + list(new or []):
+        if isinstance(r, dict) and r.get("rel"):
+            k = _check_key(r.get("key"))
+            out[(k, r["rel"])] = {**out.get((k, r["rel"]), {}), **r, "key": k}
+    return list(out.values())
 
 
 def _upsert_items(state: Dict[str, Any], data: Dict[str, Any]) -> int:
@@ -84,8 +96,15 @@ def _upsert_items(state: Dict[str, Any], data: Dict[str, Any]) -> int:
             raise ValueError("each item must be an object")
         key = _check_key(raw.get("key"))
         cur = state["items"].get(key, {})
-        # shallow merge: fields sent replace the old value, fields omitted keep it
-        state["items"][key] = {**cur, **raw, "key": key, "updated_at": now()}
+        # fields sent replace the old value, fields omitted keep it; nested state/related merge
+        merged = {**cur, **raw, "key": key, "updated_at": now()}
+        if isinstance(raw.get("state"), dict):
+            merged["state"] = {**(cur.get("state") or {}), **raw["state"]}
+        if "related" in raw:
+            merged["related"] = _merge_related(cur.get("related"), raw.get("related"))
+        if "acted" in cur:
+            merged["acted"] = cur["acted"]  # only update_dashboard(actions) may set this
+        state["items"][key] = merged
     return len(items)
 
 
@@ -125,12 +144,19 @@ def _log_actions(state: Dict[str, Any], data: Dict[str, Any]) -> int:
         }
         if not entry["action"]:
             raise ValueError("each action needs an 'action' (e.g. approved, nudged, closed)")
-        # the same action on the same item re-run is an update, not a second entry
-        state["actions"] = [
-            a for a in state["actions"]
-            if not (a["key"] == key and a["action"] == entry["action"] and a["link"] == entry["link"])
-        ]
+        # the same write re-sent is an update in place (original timestamp kept), not a second
+        # entry. Identity is the link; with no link, the summary tells two real nudges apart.
+        def same(a: Dict[str, Any]) -> bool:
+            if a["key"] != key or a["action"] != entry["action"]:
+                return False
+            return a["link"] == entry["link"] if entry["link"] else (not a["link"] and a["summary"] == entry["summary"])
+
+        prior = next((a for a in state["actions"] if same(a)), None)
+        if prior:
+            entry["ts"] = prior["ts"]
+        state["actions"] = [a for a in state["actions"] if not same(a)]
         state["actions"].append(entry)
+        state["actions"].sort(key=lambda a: a["ts"])
         item = state["items"].setdefault(key, {"key": key})
         item["acted"] = {"ts": entry["ts"], "action": entry["action"], "link": entry["link"]}
     state["actions"] = state["actions"][-MAX_ACTIONS:]

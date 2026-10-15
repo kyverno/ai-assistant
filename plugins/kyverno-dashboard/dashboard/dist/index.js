@@ -168,54 +168,60 @@
 
   // ---------------------------------------------------------------- relationship graph
 
+  const clip = (s, n) => (s && s.length > n ? s.slice(0, n - 1) + "…" : s || "");
+
+  // Focus card on the left, related items stacked on the right, curved connectors between.
   function Graph(p) {
     const { focusKey, items, onOpen } = p;
     const edges = edgesFor(focusKey, items);
-    const W = 420, H = 250, cx = W / 2, cy = H / 2;
     const shown = edges.slice(0, 8);
     const extra = edges.length - shown.length;
     const focus = items[focusKey] || {};
+    const FW = 150, NW = 190, NH = 42, GAP = 14, W = 450, PAD = 6;
+    const H = Math.max(NH, shown.length * (NH + GAP) - GAP) + PAD * 2;
+    const fx = PAD, fy = H / 2, nx = W - NW - PAD;
 
-    const node = (key, x, y, w, status, isFocus, ref) => {
-      const known = !!items[key];
+    const card = (key, x, y, w, status, isFocus, ref, title) => {
       const label = KIND[kindOf(key)].short + " #" + numOf(key);
+      const chars = Math.floor((w - 22) / 6);
       return h("g", {
-        key: ref, className: "kv-node kv-st-" + status + (isFocus ? " focus" : "") + (known ? " known" : ""),
-        transform: "translate(" + (x - w / 2) + "," + (y - 13) + ")",
+        key: ref, className: "kv-node kv-st-" + status + (isFocus ? " focus" : ""),
+        transform: "translate(" + x + "," + (y - NH / 2) + ")",
         tabIndex: isFocus ? -1 : 0, role: isFocus ? "img" : "button",
-        "aria-label": label + " " + STATUS[status].label,
+        "aria-label": label + " " + STATUS[status].label + (title ? ": " + title : ""),
         onClick: isFocus ? undefined : () => onOpen(key),
-        onKeyDown: isFocus ? undefined : (e) => { if (e.key === "Enter") onOpen(key); },
+        onKeyDown: isFocus ? undefined : (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onOpen(key); } },
       },
-        h("rect", { width: w, height: 26, rx: 13 }),
-        h("text", { x: 11, y: 17.5, className: "kv-node-glyph" }, STATUS[status].glyph),
-        h("text", { x: 24, y: 17.5, className: "kv-node-text" }, label));
+        h("title", null, label + (title ? " · " + title : "")),
+        h("rect", { className: "kv-node-box", width: w, height: NH, rx: 6 }),
+        h("rect", { className: "kv-node-bar", width: 4, height: NH - 12, x: 6, y: 6, rx: 2 }),
+        h("text", { x: 18, y: 17, className: "kv-node-text" },
+          STATUS[status].glyph + " " + label),
+        h("text", { x: 18, y: 33, className: "kv-node-title" }, clip(title, chars)));
     };
 
     const parts = shown.map((e, i) => {
-      const ang = -Math.PI / 2 + (i * 2 * Math.PI) / shown.length;
-      const x = cx + Math.cos(ang) * 150;
-      const y = cy + Math.sin(ang) * 88;
+      const o = items[e.key] || {};
+      const ny = PAD + NH / 2 + i * (NH + GAP);
       const rel = REL[e.rel];
-      const mx = cx + (x - cx) * 0.52, my = cy + (y - cy) * 0.52;
-      const x1 = cx, y1 = cy;
-      const [ax, ay, bx, by] = rel.dir === "in" ? [x, y, cx, cy] : [x1, y1, x, y];
-      const cls = "kv-edge kv-rel-" + e.rel;
+      const x1 = fx + FW, x2 = nx, mx = (x1 + x2) / 2;
+      const [sx, sy, ex, ey] = rel.dir === "in" ? [x2, ny, x1, fy] : [x1, fy, x2, ny];
+      const d = "M" + sx + "," + sy + " C" + mx + "," + sy + " " + mx + "," + ey + " " + ex + "," + ey;
       return [
-        h("line", { key: "e" + i, className: cls, x1: ax, y1: ay, x2: bx, y2: by,
+        h("path", { key: "e" + i, className: "kv-edge kv-rel-" + e.rel, d, fill: "none",
           markerEnd: rel.dir === "none" ? undefined : "url(#kv-arrow)" }),
-        h("text", { key: "t" + i, className: "kv-edge-label", x: mx, y: my - 4, textAnchor: "middle" }, rel.label),
-        node(e.key, x, y, 92, statusOf(items[e.key], e.state), false, "n" + i),
+        h("text", { key: "t" + i, className: "kv-edge-label", x: mx, y: (fy + ny) / 2 + 3, textAnchor: "middle" }, rel.label),
+        card(e.key, nx, ny, NW, statusOf(o, e.state), false, "n" + i, o.title || e.title),
       ];
     });
 
     return h("figure", { className: "kv-graph" },
       h("svg", { viewBox: "0 0 " + W + " " + H, role: "group", "aria-label": "Relationships for " + focusKey },
         h("defs", null,
-          h("marker", { id: "kv-arrow", viewBox: "0 0 8 8", refX: 14, refY: 4, markerWidth: 7, markerHeight: 7, orient: "auto" },
+          h("marker", { id: "kv-arrow", viewBox: "0 0 8 8", refX: 7, refY: 4, markerWidth: 7, markerHeight: 7, orient: "auto" },
             h("path", { d: "M0,0 L8,4 L0,8 z", className: "kv-arrow" }))),
         parts,
-        node(focusKey, cx, cy, 104, statusOf(focus), true, "focus")),
+        card(focusKey, fx, fy, FW, statusOf(focus), true, "focus", focus.title)),
       h("figcaption", { className: "kv-graph-legend" },
         Object.keys(STATUS).map((s) => h("span", { key: s, className: "kv-leg kv-st-" + s },
           h("i", { "aria-hidden": "true" }, STATUS[s].glyph), STATUS[s].label)),
