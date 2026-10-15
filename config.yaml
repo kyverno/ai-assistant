@@ -4,11 +4,10 @@
 # independently verified against the real upstream servers (see
 # docs/architecture.md for how and when):
 #
-#   1. mcp_servers.<name>.env (GITHUB_TOOLSETS/GITHUB_EXCLUDE_TOOLS,
-#      SLACK_MCP_ENABLED_TOOLS below) — the upstream MCP server itself never
-#      advertises the excluded tools. Confirmed by running both real
-#      containers and diffing their actual `tools/list` response against
-#      this file's tool names.
+#   1. mcp_servers.github.headers (X-MCP-Tools) and mcp_servers.slack.env
+#      (SLACK_MCP_ENABLED_TOOLS below) — the upstream MCP server itself never
+#      advertises the excluded tools. Confirmed by diffing each server's actual
+#      `tools/list` response against this file's tool names.
 #   2. mcp_servers.<name>.tools.include below — Hermes' own per-tool filter,
 #      matched against the server's raw (unprefixed) tool names. Belt and
 #      suspenders with (1): even a server that ignores its exclude env var
@@ -30,72 +29,14 @@ model:
 
 mcp_servers:
   github:
-    command: docker
-    args:
-      - run
-      - -i
-      - --rm
-      - -e
-      - GITHUB_PERSONAL_ACCESS_TOKEN
-      - -e
-      - GITHUB_LOCKDOWN_MODE
-      - -e
-      - GITHUB_TOOLSETS
-      - -e
-      - GITHUB_EXCLUDE_TOOLS
-      - ghcr.io/github/github-mcp-server
-    env:
-      GITHUB_PERSONAL_ACCESS_TOKEN: "${GITHUB_TOKEN}"
-      # Lockdown mode OFF — verified this breaks the tool outright, not a
-      # tradeoff. Live-tested against the real container: with it on, every
-      # pull_request_read call 403s for ANY non-collaborator token, because
-      # the server's own lockdown check calls GitHub's collaborator-
-      # permission endpoint on the PR's AUTHOR to decide whether to filter —
-      # and that endpoint itself requires the CALLING token to have
-      # push access on the repo ("403 Resource not accessible by personal
-      # access token"). A maintainer without push access (the exact,
-      # expected use case for a non-codeowner running this profile) can't
-      # use lockdown mode at all — it fails closed on every PR read, not
-      # just on filtering. It was already documented as "best-effort
-      # content filter, not an authorization boundary" — (1)/(2)/(3) above
-      # are the real controls — so losing it costs a heuristic, not
-      # security.
-      GITHUB_LOCKDOWN_MODE: "0"
-      # `all` on purpose: GITHUB_EXCLUDE_TOOLS below is the real gate, and
-      # naming toolset *groups* here instead risks silently missing a tool
-      # this profile needs (verified live: the default toolset omits
-      # labels/git/code_security/dependabot/secret_protection/actions
-      # entirely). Widen here, narrow with an explicit list, not vice versa.
-      GITHUB_TOOLSETS: "all"
-      # Everything NOT in mcp_servers.github.tools.include below, by name.
-      # Generated as (full `all`-toolset tool list) minus (tools.include) —
-      # keep these two lists as exact complements of each other.
-      GITHUB_EXCLUDE_TOOLS: >-
-        actions_run_trigger,assign_copilot_to_issue,assign_copilot_to_issue_with_intent,
-        create_branch,create_gist,create_or_update_file,create_pull_request,
-        create_repository,create_repository_ruleset,custom_properties_read,
-        custom_properties_write,delete_file,
-        dismiss_notification,fork_repository,get_code_quality_finding,get_commit,
-        get_gist,get_global_security_advisory,
-        get_me,get_notification_details,get_release_by_tag,get_tag,label_write,
-        list_branches,list_commits,
-        list_gists,list_global_security_advisories,list_issue_fields,
-        list_issue_types,list_issues,list_notifications,list_org_repository_security_advisories,
-        list_pull_requests,list_repository_collaborators,list_repository_security_advisories,
-        list_starred_repositories,list_tags,manage_notification_subscription,
-        manage_repository_notification_subscription,mark_all_notifications_read,
-        merge_pull_request,projects_get,projects_list,projects_write,push_files,
-        repository_ruleset_read,search_commits,search_orgs,
-        search_repositories,search_users,star_repository,sub_issue_write,
-        unstar_repository,update_gist,update_pull_request
-    # Verified live, not assumed: sent two overlapping in-flight tools/call
-    # requests over this exact container's stdio and got both back
-    # correctly id-matched, out of submission order — real concurrent
-    # handling, not a single-threaded queue. Without this, Hermes rejects a
-    # multi-call batch to a non-opted-in server outright ("a tool_call
-    # batch takes exactly one entry for a non-parallel-safe server") and
-    # every fetch serializes one round trip at a time — real, measured cost
-    # against a real queue (dozens of PRs).
+    # GitHub-hosted MCP server. X-MCP-Tools is the server-side allowlist and must list exactly
+    # the tools under `tools.include` below (scripts/install.sh checks this): any other tool,
+    # including merge, does not exist for this connection.
+    url: https://api.githubcopilot.com/mcp/
+    headers:
+      Authorization: "Bearer ${GITHUB_TOKEN}"
+      X-MCP-Tools: "search_pull_requests,pull_request_read,issue_read,search_issues,list_issues,list_label,get_label,get_file_contents,get_repository_tree,search_code,get_team_members,get_teams,list_releases,get_latest_release,list_code_scanning_alerts,get_code_scanning_alert,list_dependabot_alerts,get_dependabot_alert,list_secret_scanning_alerts,get_secret_scanning_alert,actions_list,actions_get,get_job_logs,issue_write,add_issue_comment,update_issue_comment,pull_request_review_write,add_comment_to_pending_review,add_reply_to_pull_request_comment,update_pull_request_branch,request_copilot_review,list_discussion_categories,list_discussions,get_discussion,get_discussion_comments,discussion_comment_write,get_commit,list_commits,list_branches,list_tags,get_tag,get_release_by_tag,search_commits,list_pull_requests,search_repositories,search_users,get_me,check_dependency_vulnerabilities,get_global_security_advisory,list_global_security_advisories,get_code_quality_finding,projects_get,projects_list,repository_ruleset_read,list_issue_types,list_issue_fields,custom_properties_read,list_repository_collaborators,semantic_issue_similarity_search,label_write,sub_issue_write,update_pull_request,projects_write"
+    # Verified live: overlapping tools/call requests run concurrently.
     supports_parallel_tool_calls: true
     tools:
       # PR queue reads — pull_request_read is one multiplexed tool (method:
@@ -103,9 +44,7 @@ mcp_servers:
       # get_review_comments/get_comments/get_check_runs). search_pull_requests
       # covers milestone:/review-requested:/label: query syntax, which is how
       # "requested reviewer" filtering and milestone/release-urgency reasoning
-      # both work — there's no separate milestone-listing tool, and no
-      # list_pull_requests either: search_pull_requests's query syntax covers
-      # every case this profile needs, so the plain list tool isn't granted.
+      # both work — there's no separate milestone-listing tool.
       #
       # Related-issue reads — issue_read's 'get' method returns
       # closed_by_pull_requests (skills/pr-queue uses this for "explain PR
@@ -174,6 +113,33 @@ mcp_servers:
         - get_discussion
         - get_discussion_comments
         - discussion_comment_write
+        - get_commit
+        - list_commits
+        - list_branches
+        - list_tags
+        - get_tag
+        - get_release_by_tag
+        - search_commits
+        - list_pull_requests
+        - search_repositories
+        - search_users
+        - get_me
+        - check_dependency_vulnerabilities
+        - get_global_security_advisory
+        - list_global_security_advisories
+        - get_code_quality_finding
+        - projects_get
+        - projects_list
+        - repository_ruleset_read
+        - list_issue_types
+        - list_issue_fields
+        - custom_properties_read
+        - list_repository_collaborators
+        - semantic_issue_similarity_search
+        - label_write
+        - sub_issue_write
+        - update_pull_request
+        - projects_write
 
   slack:
     command: docker
@@ -246,7 +212,7 @@ platform_toolsets:
 
 hooks:
   pre_tool_call:
-    - matcher: "merge|delete_repo|force_push"
+    - matcher: ".*(merge|delete_repo|force_push).*"
       command: "./hooks/block-dangerous-tools.sh"
       timeout: 10
       fail_closed: true
@@ -255,6 +221,12 @@ hooks:
     # straight to the database, bypassing the gate entirely (verified: no
     # pending file, the row lands immediately). This hook is the real control
     # for that tool specifically — see docs/v2-plan.md Phase 8.
+    # The terminal exists only when scripts/install.sh sets up the OpenShell
+    # sandbox; this makes every call prove it still runs there.
+    - matcher: "terminal|process_manage|read_file|write_file|patch|search_files"
+      command: "./hooks/require-sandbox-terminal.sh"
+      timeout: 10
+      fail_closed: true
     - matcher: "mnemosyne_triple_add"
       command: "./hooks/block-mnemosyne-triples.sh"
       timeout: 10
