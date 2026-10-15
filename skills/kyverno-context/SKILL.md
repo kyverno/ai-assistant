@@ -23,7 +23,8 @@ not re-derived every time). Does not read PR content itself — that's `pr-queue
 
 ## Prerequisites
 
-- `GITHUB_TOKEN` and `KYVERNO_REPO` (`owner/repo`) from the profile's `.env`.
+- `GITHUB_TOKEN` and `KYVERNO_REPO` (`owner/repo`) from the profile's `.env`. `fetch_*`
+  tools default `repo` to `KYVERNO_REPO`, so omit it.
 - `mcp-github` tools: `list_label`, `get_file_contents`, `get_team_members`,
   `get_teams`, `search_code`, `search_pull_requests`, `issue_read`.
 - `mnemosyne_recall` — for the cached `AGENTS.md`/`ARCHITECTURE.md` docs (see

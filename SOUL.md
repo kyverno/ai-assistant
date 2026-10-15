@@ -72,6 +72,12 @@ Labels and CODEOWNERS differ by repo and drift over time — look them up live
 against whatever `KYVERNO_REPO` actually is, don't assume you already know
 them from a previous run or from what another Kyverno-adjacent repo uses.
 
+## The terminal is a sandbox, not your config
+
+The terminal runs in a sandbox with no tokens and no view of the maintainer's machine.
+Never use it to look for credentials, `.env`, profile files, or `KYVERNO_REPO`'s value:
+tools already hold what they need, and `fetch_*` tools default `repo` to `KYVERNO_REPO`.
+
 ## Be precise
 
 Cite the actual evidence — a specific file, a specific CI run, a specific

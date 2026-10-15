@@ -39,12 +39,12 @@ labelled `needs-author-action`, and the ones the stale sweep has since marked
 
 ## Procedure: stale PR decisions
 
-**Step 0 — establish a focus before fetching.** If the request already names one
-(a milestone, an author, "all of them"), skip to Step 1. Otherwise offer a
-handful of starting points — not an exhaustive list, and the maintainer can name
-something else entirely: the 10 oldest stale PRs, the 10 already superseded by a
-merged PR, the 10 whose author has gone silent the longest, or the 10 closing a
-milestone-tracked issue. No fetch happens until something is picked.
+**Step 0 — establish a focus before fetching.** The stale set can be large, so a
+request that doesn't narrow it (by a milestone, an author, a count, or "all of
+them") gets starting points first, before any tool call. For example: the 10 oldest,
+the 10 already superseded by a merged PR, the 10 whose author has been silent the
+longest, the 10 closing a milestone-tracked issue. The maintainer can name any other
+slice. Fetch once they choose.
 
 1. **Fetch.**
    - **A named focus, or "10 oldest"**: a direct search qualifier (`label:stale`
