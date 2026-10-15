@@ -28,7 +28,7 @@ fi
 pass "hermes CLI found ($(hermes --version 2>&1 | head -1))"
 
 if ! command -v docker >/dev/null 2>&1; then
-  fail "docker not found on PATH — the GitHub/Slack MCP servers run as containers"
+  fail "docker not found on PATH — the Slack MCP server and the sandboxed terminal run in Docker"
   exit 1
 fi
 if ! docker info >/dev/null 2>&1; then
@@ -47,14 +47,21 @@ cfg_get() {
   case "$v" in "Config key not set"*) v="" ;; esac
   printf '%s' "$v"
 }
-PREV_PROVIDER=""
-PREV_MODEL=""
-if [ -d "$PROFILE_DIR" ]; then
-  PREV_PROVIDER=$(cfg_get model.provider)
-  PREV_MODEL=$(cfg_get model.default)
+# The update below resets config.yaml; keep what the maintainer chose with `hermes model` or /model.
+MODEL_KEEP=""
+PREV_TERMINAL=""
+if [ -f "$PROFILE_DIR/distribution.yaml" ]; then
+  MODEL_KEEP=$(python3 -c "
+import yaml
+m = (yaml.safe_load(open('$PROFILE_DIR/config.yaml')) or {}).get('model') or {}
+for k, v in (m.items() if isinstance(m, dict) else []):
+    if isinstance(v, (str, int, float, bool)):
+        print(f'{k}\t{v}')
+" 2>/dev/null)
+  PREV_TERMINAL=$(cfg_get terminal.backend)
 fi
 
-if [ -d "$PROFILE_DIR" ]; then
+if [ -f "$PROFILE_DIR/distribution.yaml" ]; then
   info "profile '$PROFILE' already installed — pulling in any repo changes (skills, config.yaml,"
   info "plugins/, cron) since the last install/update..."
   if ! hermes profile update "$PROFILE" --force-config -y; then
@@ -64,6 +71,9 @@ if [ -d "$PROFILE_DIR" ]; then
   pass "profile '$PROFILE' updated (config.yaml, skills, plugins/, cron refreshed; .env untouched)"
 else
   info "installing profile '$PROFILE'..."
+  # Hermes refuses to install under a name it has deleted before (it leaves a marker);
+  # clear the marker so deleting and re-creating a profile works.
+  rm -f "$HOME/.hermes/profiles/.deleted/$PROFILE"
   if ! hermes profile install . --name "$PROFILE" --alias -y; then
     fail "hermes profile install failed — see output above"
     exit 1
@@ -76,7 +86,40 @@ fi
 # triggers and Hermes' one pinned "essential" skill (hermes-agent) never
 # lands. Force it explicitly (confirmed via a real fresh-install test).
 hermes -p "$PROFILE" skills reset hermes-agent --restore --yes >/dev/null 2>&1
-pass "essential Hermes skills present"
+
+# Hermes ships ~60 bundled skills; every enabled skill costs prompt tokens. Seed them once,
+# keep this distribution's own skills plus a curated set of Hermes ones, and stop re-seeding.
+hermes -p "$PROFILE" skills opt-in --sync >/dev/null 2>&1
+python3 - "$PROFILE_DIR/skills" <<'PY'
+import shutil, sys
+from pathlib import Path
+root = Path(sys.argv[1])
+keep = {p.parent.name for p in Path("skills").glob("*/SKILL.md")} | set("""
+hermes-agent codebase-inspection dogfood github hermes-agent-skill-authoring
+inspecting-hermes-desktop-dom node-inspect-debugger python-debugpy requesting-code-review
+simplify-code spike systematic-debugging test-driven-development
+arxiv competitor-news-monitor grounded-citations llm-wiki blocked-page-recovery sdlc-review
+""".split())
+for skill in sorted(root.rglob("SKILL.md")):
+    if ".archive" not in skill.parts and skill.parent.name not in keep:
+        shutil.rmtree(skill.parent)
+for d in sorted((q for q in root.rglob("*") if q.is_dir()), reverse=True):
+    if not any(d.iterdir()):
+        d.rmdir()
+PY
+hermes -p "$PROFILE" skills opt-out >/dev/null 2>&1
+pass "skills: this distribution's plus a curated set of Hermes ones (no other bundled skills)"
+
+# Hermes runs hook commands relative to the directory it was started from, so a relative
+# ./hooks/ path silently stops firing anywhere but the profile directory. Pin them.
+python3 - "$PROFILE_DIR" <<'PY'
+import sys
+profile_dir = sys.argv[1]
+path = profile_dir + "/config.yaml"
+s = open(path).read()
+open(path, "w").write(s.replace('command: "./hooks/', 'command: "' + profile_dir + '/hooks/'))
+PY
+pass "hook scripts pinned to $PROFILE_DIR/hooks"
 
 step "3. Credentials"
 
@@ -146,25 +189,6 @@ if [ "$INTERACTIVE" = 1 ]; then
   prompt_for MAINTAINER_GITHUB_LOGIN "Your GitHub username: "
   prompt_for KYVERNO_REPO "Repo to manage (owner/repo): "
 
-  if [ -z "$(env_get ANTHROPIC_API_KEY)" ] && [ -z "$(env_get COPILOT_GITHUB_TOKEN)" ]; then
-    info ""
-    info "Model provider:"
-    info "  1) Anthropic API key"
-    info "  2) GitHub Copilot, sign in with GitHub (device login)"
-    info "  3) GitHub Copilot, paste a PAT"
-    info "  4) Skip for now"
-    read -r -p "  Choice [1-4]: " PROVIDER_CHOICE </dev/tty
-    case "$PROVIDER_CHOICE" in
-      1) prompt_for ANTHROPIC_API_KEY "Anthropic API key: " secret ;;
-      2)
-        info "Choose GitHub Copilot, then Login with GitHub, and enter the code it shows."
-        hermes -p "$PROFILE" model </dev/tty
-        [ -z "$(env_get COPILOT_GITHUB_TOKEN)" ] && info "no Copilot token was saved — re-run this script to try again"
-        ;;
-      3) prompt_for COPILOT_GITHUB_TOKEN "Copilot PAT: " secret ;;
-    esac
-  fi
-
   if [ -z "$(env_get SLACK_BOT_TOKEN)" ] && [ -z "$(env_get SLACK_APP_TOKEN)" ]; then
     info ""
     read -r -p "  Set up Slack now? (README step 3) [y/N]: " SLACK_CHOICE </dev/tty
@@ -203,50 +227,13 @@ if [ -n "$MISSING" ]; then
   exit 0
 fi
 
-LLM_PROVIDER=$(python3 -c "
-values = {}
-with open('$ENV_FILE') as f:
-    for line in f:
-        line = line.strip()
-        if not line or line.startswith('#') or '=' not in line:
-            continue
-        k, _, v = line.partition('=')
-        values[k.strip()] = v.strip()
-print('anthropic' if values.get('ANTHROPIC_API_KEY') else 'copilot' if values.get('COPILOT_GITHUB_TOKEN') else '')
-")
-
-if [ -z "$LLM_PROVIDER" ]; then
-  fail "$ENV_FILE has no model provider — set ONE of ANTHROPIC_API_KEY or COPILOT_GITHUB_TOKEN"
-  info ""
-  info "Fill one in, then re-run this script:"
-  info "  \$EDITOR $ENV_FILE"
-  info ""
-  info "For GitHub Copilot you can skip the PAT and sign in with device login instead:"
-  info "  hermes -p $PROFILE model     # GitHub Copilot → Login with GitHub"
-  info "  ./scripts/install.sh $PROFILE"
-  exit 0
-fi
 pass "all required credentials are filled in ($ENV_FILE)"
 
-# Default model per provider; a model the maintainer already picked for the same
-# provider wins. Any model the provider offers is selectable: hermes -p $PROFILE model
-if [ "$LLM_PROVIDER" = "copilot" ]; then
-  MODEL="claude-sonnet-4.6"
-  [ "$PREV_PROVIDER" = "copilot" ] && [ -n "$PREV_MODEL" ] && MODEL="$PREV_MODEL"
-  if hermes -p "$PROFILE" config set model.provider copilot >/dev/null 2>&1 \
-    && hermes -p "$PROFILE" config set model.default "$MODEL" >/dev/null 2>&1; then
-    pass "model: GitHub Copilot / $MODEL (change: hermes -p $PROFILE model)"
-  else
-    fail "couldn't set the Copilot provider — run: hermes -p $PROFILE model"
-  fi
-else
-  MODEL="anthropic/claude-sonnet-4-6"
-  if [ -z "$PREV_PROVIDER" ] || [ "$PREV_PROVIDER" = "anthropic" ]; then
-    [ -n "$PREV_MODEL" ] && MODEL="$PREV_MODEL"
-    [ -n "$PREV_PROVIDER" ] && hermes -p "$PROFILE" config set model.provider anthropic >/dev/null 2>&1
-    hermes -p "$PROFILE" config set model.default "$MODEL" >/dev/null 2>&1
-  fi
-  pass "model: Anthropic / $MODEL (change: hermes -p $PROFILE model)"
+# Put back the maintainer's model choice (the profile update reset it).
+if [ -n "$MODEL_KEEP" ]; then
+  while IFS=$'\t' read -r key value; do
+    hermes -p "$PROFILE" config set "model.$key" "$value" >/dev/null 2>&1
+  done <<< "$MODEL_KEEP"
 fi
 
 # Hermes only substitutes ${HERMES_SKILL_DIR}/${HERMES_SESSION_ID} in SKILL.md
@@ -408,7 +395,46 @@ else
   info "no Slack credentials set — skipping gateway (CLI-only use is fine)"
 fi
 
-step "6. Sanity checks"
+step "6. Sandboxed terminal"
+
+# The terminal runs inside an NVIDIA OpenShell sandbox: no tokens, read-only GitHub, every
+# decision audited. Without the sandbox the profile has no terminal at all.
+SANDBOX_TERMINAL="no"
+WANT_SANDBOX="${KYVERNO_SANDBOX_TERMINAL:-}"
+[ -z "$WANT_SANDBOX" ] && [ "$PREV_TERMINAL" = "ssh" ] && WANT_SANDBOX=yes
+if [ -z "$WANT_SANDBOX" ] && [ "$INTERACTIVE" = 1 ]; then
+  info "Optional: a sandboxed terminal for the assistant (installs NVIDIA OpenShell and builds a"
+  info "small Docker image). It can read GitHub and run commands, but holds no tokens and cannot"
+  info "write anywhere you haven't allowed (policies/terminal.yaml)."
+  read -r -p "  Set it up? [Y/n]: " WANT_SANDBOX </dev/tty
+  case "$WANT_SANDBOX" in [Nn]*) WANT_SANDBOX=no ;; *) WANT_SANDBOX=yes ;; esac
+fi
+if [ "$WANT_SANDBOX" = "yes" ]; then
+  if ./scripts/openshell.sh setup; then
+    python3 - "$PROFILE_DIR/config.yaml" <<'PY'
+import re, sys
+p = sys.argv[1]
+s = open(p).read()
+for tool in ("terminal", "file"):
+    if not re.search(r"(?m)^    - %s$" % tool, s):
+        s = s.replace("    - cronjob\n", "    - cronjob\n    - %s\n" % tool, 1)
+open(p, "w").write(s)
+PY
+    for kv in terminal.backend=ssh terminal.ssh_host=openshell-kyverno-terminal.default \
+              terminal.ssh_user=sandbox terminal.cwd=/sandbox terminal.degraded_mode=fail; do
+      hermes -p "$PROFILE" config set "${kv%%=*}" "${kv#*=}" >/dev/null 2>&1
+    done
+    SANDBOX_TERMINAL="yes"
+    pass "terminal and file tools enabled, running only in the sandbox"
+    info "Audit: ./scripts/openshell.sh audit summary   (daily logs in ~/.kyverno-assistant/audit)"
+  else
+    fail "sandbox setup failed — the terminal stays off. Fix the error above and re-run this script"
+  fi
+else
+  info "skipped — no terminal (re-run with KYVERNO_SANDBOX_TERMINAL=yes to add it later)"
+fi
+
+step "7. Sanity checks"
 
 MCP_OUT=$(hermes -p "$PROFILE" mcp list 2>&1)
 if echo "$MCP_OUT" | grep -q "github .*enabled"; then
@@ -423,6 +449,16 @@ if [ "$SLACK_CONFIGURED" = "yes" ]; then
   else
     fail "slack MCP server not enabled — run: hermes -p $PROFILE mcp list"
   fi
+fi
+
+if python3 -c "
+import sys, yaml
+g = yaml.safe_load(open('$PROFILE_DIR/config.yaml'))['mcp_servers']['github']
+sys.exit(0 if set(g['headers']['X-MCP-Tools'].split(',')) == set(g['tools']['include']) else 1)
+"; then
+  pass "github tool allowlist header matches tools.include"
+else
+  fail "mcp_servers.github.headers.X-MCP-Tools and tools.include differ in config.yaml — they must list the same tools"
 fi
 
 if hermes -p "$PROFILE" mcp test github >/dev/null 2>&1; then
@@ -446,9 +482,20 @@ else
 fi
 
 TOOLS_OUT=$(hermes -p "$PROFILE" tools list 2>&1)
-LEAKED=$(echo "$TOOLS_OUT" | grep -E "✓ enabled  (terminal|file|browser|code_execution|computer_use|connections|delegation)  " || true)
+if [ "$SANDBOX_TERMINAL" = "yes" ]; then
+  TERMINAL_RE="browser|code_execution|computer_use|connections|delegation"
+  if [ "$(cfg_get terminal.backend)" = "ssh" ] && cfg_get terminal.ssh_host | grep -q '^openshell-' \
+     && echo "$TOOLS_OUT" | grep -q "✓ enabled  terminal  "; then
+    pass "terminal enabled and bound to the sandbox"
+  else
+    fail "terminal is not bound to the sandbox — see config.yaml terminal section"
+  fi
+else
+  TERMINAL_RE="terminal|file|browser|code_execution|computer_use|connections|delegation"
+fi
+LEAKED=$(echo "$TOOLS_OUT" | grep -E "✓ enabled  ($TERMINAL_RE)  " || true)
 if [ -z "$LEAKED" ]; then
-  pass "no laptop-level tool access (terminal/file/browser/etc. disabled)"
+  pass "no laptop-level tool access (only the sandboxed terminal, if set up)"
 else
   fail "unexpected tool access enabled — this profile can reach beyond GitHub/Slack:"
   info "$LEAKED"
@@ -456,6 +503,7 @@ fi
 
 step "Done"
 
+info "Model: choose one in the chat with /model, or run: hermes -p $PROFILE model  (or put a key such as ANTHROPIC_API_KEY in $ENV_FILE)"
 info "Talk to it: hermes -p $PROFILE chat  (or 'kyverno chat' if the alias took)"
 info "Dashboard: hermes -p $PROFILE dashboard  (Kyverno tab, http://127.0.0.1:9119/kyverno)"
 info ""
