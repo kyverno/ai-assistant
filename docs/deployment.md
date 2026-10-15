@@ -32,7 +32,8 @@ committed) and fill in these yourself:
 - `GITHUB_TOKEN` — fine-grained PAT: Contents Read, Pull requests Read & Write,
   Issues Read & Write, Checks Read, Code scanning alerts Read, Dependabot
   alerts Read, Secret scanning alerts Read, org Members Read (the last one
-  for CODEOWNERS team resolution). Do **not** grant Contents Write or any
+  for CODEOWNERS team resolution). Optional: org Projects Read & Write,
+  Administration Read (rulesets), org Custom properties Read. Do **not** grant Contents Write or any
   merge/admin scope — the toolset doesn't call a merge endpoint, but the
   token shouldn't be able to either (belt and suspenders, see
   `docs/architecture.md`).
@@ -59,14 +60,10 @@ committed) and fill in these yourself:
   and post the queue in. Invite the bot to it (`/invite @kyverno-assistant`).
 - `KYVERNO_REPO` — `owner/repo` this instance manages. Defaults to
   `kyverno/kyverno`.
-- `ANTHROPIC_API_KEY` or `COPILOT_GITHUB_TOKEN` — set one. The installer
-  picks the provider from whichever is filled in (Anthropic if both).
-  `COPILOT_GITHUB_TOKEN` is either a fine-grained PAT owned by your personal
-  account with the Account permission "Copilot Requests", or the token
-  `hermes -p kyverno model` saves after GitHub device login (GitHub Copilot →
-  Login with GitHub). It needs a Copilot seat with Claude Sonnet enabled by
-  your org admin. It is separate from
-  `GITHUB_TOKEN`, which stays the repo-scoped PAT for the GitHub tools.
+- `ANTHROPIC_API_KEY`, `COPILOT_GITHUB_TOKEN` or another provider key — optional.
+  The model is chosen in Hermes (`hermes -p kyverno model`, or `/model` in a
+  chat), and the installer never changes it. `COPILOT_GITHUB_TOKEN` is separate
+  from `GITHUB_TOKEN`, which stays the repo-scoped PAT for the GitHub tools.
 
 ## Run
 
@@ -120,17 +117,9 @@ hermes mcp test github
 hermes mcp test slack
 ```
 
-The GitHub side can also be checked credential-free by running the real
-container directly and diffing its tool list:
-
-```bash
-docker run -i --rm \
-  -e GITHUB_PERSONAL_ACCESS_TOKEN=dummy -e GITHUB_LOCKDOWN_MODE=1 \
-  -e GITHUB_TOOLSETS=all -e GITHUB_EXCLUDE_TOOLS="$(python3 -c "import yaml;print(yaml.safe_load(open('config.yaml'))['mcp_servers']['github']['env']['GITHUB_EXCLUDE_TOOLS'])")" \
-  ghcr.io/github/github-mcp-server
-# then speak MCP `initialize` + `tools/list` over its stdio and compare
-# against mcp_servers.github.tools.include in config.yaml.
-```
+The hosted GitHub server needs a token to answer at all (`401` without one), so there is no
+credential-free probe. `hermes mcp test github` lists the tools it actually offers; that list must
+equal `mcp_servers.github.tools.include` and must not contain a merge tool.
 
 The Slack side can't be checked credential-free the same way — the server
 exits before the MCP handshake on an invalid or missing token (see above) —

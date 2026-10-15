@@ -27,17 +27,16 @@ kyverno-assistant is a [Hermes profile distribution](https://hermes-agent.nousre
 
 ## Toolset allowlist — three independent layers
 
-1. **`mcp_servers.github.env.GITHUB_EXCLUDE_TOOLS`** — the `github-mcp-server` container's
-   own `--exclude-tools` flag; disables tools regardless of any other setting.
-   `GITHUB_TOOLSETS: "all"` is set deliberately, not a named toolset group — the default
-   toolset omits tools this profile needs (`list_code_scanning_alerts`,
-   `list_dependabot_alerts`, `actions_list`, `list_label`, `list_discussions`, ...), so the
-   exclude list is the real narrowing mechanism, not the toolset name.
+1. **`mcp_servers.github.headers.X-MCP-Tools`** — the allowlist GitHub's hosted MCP server
+   (`https://api.githubcopilot.com/mcp/`) applies itself: tools not named do not exist for the
+   connection, whatever the toolset. It must list exactly the tools under `tools.include`;
+   `scripts/install.sh` fails when the two differ.
 2. **`mcp_servers.github.tools.include`** — Hermes' own per-tool filter, matched against raw
    (unprefixed) tool names.
 3. **`hooks.pre_tool_call` → `hooks/block-dangerous-tools.sh`** — a shell hook, `matcher`-
-   scoped to `merge|delete_repo|force_push`, `fail_closed: true` (shell hooks fail open by
-   default; this is inverted on purpose for a security gate). Reads the tool-call event as
+   scoped to any tool name containing `merge`, `delete_repo` or `force_push` (the matcher is a
+   full-match regex, so MCP names like `mcp__github__merge_pull_request` need the `.*` wrapper),
+   `fail_closed: true` (shell hooks fail open by default; this is inverted on purpose for a security gate). Reads the tool-call event as
    JSON from stdin — Hermes pipes the event that way, not via an env var. Every invocation
    that matches the `matcher` is blocked; there's no conditional branch inside the hook.
 
@@ -170,6 +169,9 @@ profile (`hermes gateway install`), serving every profile including `kyverno`; a
 `hermes gateway run`/`install` fails on purpose once a host gateway exists, to guard against
 double-binding one bot token from two pollers. `scripts/install.sh` installs it automatically
 when Slack credentials are present.
+
+The sandboxed terminal (OpenShell policy, audit trail) is described in `docs/openshell.md`; the
+longer design (role-based bots, contributor profile) is in `docs/openshell-architecture.md`.
 
 ## What's not built yet
 

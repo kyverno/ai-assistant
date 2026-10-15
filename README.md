@@ -29,7 +29,7 @@ cd ai-assistant
 kyverno chat
 ```
 
-You need Docker, the Hermes CLI, a GitHub token and a model provider. The details are below.
+You need Docker, the Hermes CLI and a GitHub token. The model is chosen in Hermes, as described in step 5.
 
 ## Setup
 
@@ -37,19 +37,8 @@ You need Docker, the Hermes CLI, a GitHub token and a model provider. The detail
 
 | Requirement | Notes |
 |---|---|
-| [Docker](https://docs.docker.com/get-docker/) | Must be running. The GitHub and Slack tools each run as their own container. |
+| [Docker](https://docs.docker.com/get-docker/) | Must be running. The Slack tool runs as a container, and the optional sandboxed terminal uses Docker. |
 | [Hermes CLI](https://hermes-agent.nousresearch.com) | On your `PATH`. |
-| A model provider | **Either** an Anthropic API key, **or** a GitHub Copilot seat with Claude Sonnet enabled (see below). |
-
-For the Copilot route, sign in with GitHub's device flow or supply a PAT. Either way the credential
-belongs to your **personal** account (not an org) and is separate from the GitHub token in step 2.
-
-- **Device login (easiest):** run `hermes -p kyverno model`, choose **GitHub Copilot**, then
-  **Login with GitHub**. Enter the displayed code at `github.com/login/device`. The token is saved
-  to the profile's `.env` as `COPILOT_GITHUB_TOKEN`. Run this after the first
-  `./scripts/install.sh` has created the profile.
-- **PAT:** a fine-grained token with the Account permission **Copilot Requests**, pasted into
-  `COPILOT_GITHUB_TOKEN`.
 
 ### 2. GitHub token
 
@@ -66,6 +55,10 @@ Create a fine-grained personal access token scoped to the repo you will point th
 | Dependabot alerts | Read |
 | Secret scanning alerts | Read |
 | Organization members | Read |
+
+Optional, for the extra tools: Organization projects (Read & Write) for project boards,
+Administration (Read) for repository rulesets, Organization custom properties (Read). Tools whose
+permission is missing return an error and the rest keep working.
 
 Do not grant Contents Write, merge, or admin scopes. See [`docs/architecture.md`](docs/architecture.md)
 for the reasoning.
@@ -108,8 +101,7 @@ the **same Slack workspace**.
 The script is idempotent: re-run it as often as you like and it only does what is left.
 
 1. **Install and prompts:** installs the profile, then asks for each missing credential (GitHub
-   token, username, repo), lets you pick a model provider (Anthropic key, Copilot device login, or
-   Copilot PAT), and asks whether to set up Slack. Values are saved to
+   token, username, repo) and whether to set up Slack and the sandboxed terminal. Values are saved to
    `~/.hermes/profiles/kyverno/.env`. Press Enter at any prompt to skip it.
 2. **Checks:** installs the messaging gateway (only if Slack is configured), checks that the GitHub
    and Slack tools are reachable and the hooks are approved, and prints ✓ or ✗ for each check.
@@ -123,7 +115,7 @@ skips the prompts and works this way from the start.
 | `GITHUB_TOKEN` | yes | Token from step 2 |
 | `MAINTAINER_GITHUB_LOGIN` | yes | Your GitHub username |
 | `KYVERNO_REPO` | yes | `owner/repo` the assistant manages (default `kyverno/kyverno`) |
-| `ANTHROPIC_API_KEY` or `COPILOT_GITHUB_TOKEN` | one of | Model provider (device login fills in `COPILOT_GITHUB_TOKEN` for you) |
+| `ANTHROPIC_API_KEY`, `COPILOT_GITHUB_TOKEN`, … | no | Optional model keys; Hermes can also sign in to a provider for you (step 5) |
 | `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN` | Slack only | Bot and app-level tokens |
 | `SLACK_ALLOWED_USERS` | Slack only | Your Slack member ID |
 | `SLACK_HOME_CHANNEL` | Slack only | Maintainers channel ID |
@@ -140,14 +132,22 @@ kyverno chat
 
 Or mention the bot in the Slack channel you invited it to.
 
-Claude Sonnet is the default model for both providers. To switch:
+The model is yours to choose, the way Hermes does it: run `hermes -p kyverno model` and pick any
+provider, type `/model` in a chat, or add a provider key such as `ANTHROPIC_API_KEY` to the profile's
+`.env`. A Claude Pro or Max login works only with purchased extra usage
+([Anthropic's rules](https://code.claude.com/docs/en/legal-and-compliance),
+[Hermes' notes](https://hermes-agent.nousresearch.com/docs/integrations/providers)).
 
-- In a chat, `/model <name>` changes the current session. `/model <name> --global` also saves it.
-- From the shell, `hermes -p kyverno model` opens the picker for new sessions.
+Your model choice and `.env` survive re-running `./scripts/install.sh` and `./scripts/update.sh`.
 
-Saved choices survive re-running `./scripts/install.sh`.
+### 6. Sandboxed terminal (optional)
 
-### 6. Turn on the review digest (optional)
+The installer asks whether to set up a terminal that runs inside an OpenShell sandbox, with read-only
+GitHub access, no tokens, and an audit log of every allowed and denied request. Accept it to let the
+assistant reproduce issues and run commands in the same chat; when something is blocked it can ask
+for narrow access, which only you approve. Details, the policy and the audit commands are in [docs/openshell.md](docs/openshell.md).
+
+### 7. Turn on the review digest (optional)
 
 The profile ships a weekday-morning merge-sequence digest that posts to your Slack channel. It
 arrives **paused**, so nothing posts to Slack on a schedule until you resume it:
@@ -157,6 +157,16 @@ hermes cron list                          # shows "kyverno-review-digest", pause
 hermes cron resume kyverno-review-digest
 hermes cron edit kyverno-review-digest    # change the time or channel
 ```
+
+### 8. Update
+
+```bash
+./scripts/update.sh
+```
+
+Pulls the latest version of this repo and re-runs the installer: the profile (config, skills,
+hooks), the sandbox policy and image, and the checks are refreshed. Your `.env`, model choice and
+sandboxed terminal are kept.
 
 ## What it does
 
@@ -205,6 +215,10 @@ distribution.yaml        install manifest: name, version, required env vars
 SOUL.md                  the agent's identity and boundaries
 config.yaml              model default, GitHub/Slack MCP servers, tool allowlist
 scripts/install.sh       idempotent installer and sanity checks
+scripts/update.sh        git pull, then re-run the installer
+scripts/openshell.sh     sandboxed terminal: setup, policy, access requests, audit
+policies/                OpenShell policy for the sandboxed terminal
+sandbox/                 Dockerfile of the sandbox image
 hooks/                   pre_tool_call backstops
 plugins/                 bundled Hermes plugins
 skills/                  agent skills

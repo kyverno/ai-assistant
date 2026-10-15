@@ -9,7 +9,7 @@ in 2026-10; anything unverified is marked as such and is the first task of its i
 
 | Layer | What exists |
 |---|---|
-| Install | `scripts/install.sh` — idempotent profile install/update, Anthropic **or** GitHub Copilot as the model provider, Slack gateway, sanity checks |
+| Install | `scripts/install.sh` — idempotent profile install/update (`scripts/update.sh` pulls and re-runs it), curated skills, hosted GitHub MCP, Slack gateway, optional OpenShell-sandboxed terminal, sanity checks |
 | Data | `fetch_pr_candidates` (one GraphQL pass per PR, concurrent): labels, files, CI, threads, CodeRabbit + Copilot verdicts, merge state, Dependabot bumps and semver level |
 | Structure | `sequence_prs` — hard-edge graph (stacked, generated-file, body reference, closing-issue conflict), tiers, overlaps, e2e-gate state |
 | Skills | `pr-queue` (merge sequence, review briefs, **Dependabot queue**), `pr-actions`, `discussions`, `kyverno-context` |
