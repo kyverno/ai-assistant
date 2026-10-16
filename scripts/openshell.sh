@@ -29,6 +29,31 @@ sandbox_ready() {
   openshell sandbox list 2>/dev/null | awk -v n="$SANDBOX" '$1==n && $NF=="Ready"{f=1} END{exit !f}'
 }
 
+# Poll until the sandbox is Ready (default 5 minutes: the first start pulls and boots the image).
+wait_sandbox_ready() {
+  local i
+  for i in $(seq 1 "${1:-150}"); do sandbox_ready && return 0; sleep 2; done
+  return 1
+}
+
+# Say why the sandbox is not Ready: its real state and the create output. The Landlock hint is
+# only shown when Docker Desktop really is older than 4.60.
+explain_sandbox_failure() {
+  local log="${1:-}" plat re='Docker Desktop ([0-9]+)\.([0-9]+)'
+  fail "sandbox '$SANDBOX' did not become Ready"
+  openshell sandbox get "$SANDBOX" 2>&1 | head -n 15 | sed 's/^/    /' >&2
+  if [ -s "$log" ]; then
+    info "last output of 'openshell sandbox create':"
+    tail -n 15 "$log" | sed 's/^/    /' >&2
+  fi
+  plat=$(docker version --format '{{.Server.Platform.Name}}' 2>/dev/null)
+  if [[ "$plat" =~ $re ]] && { [ "${BASH_REMATCH[1]}" -lt 4 ] \
+     || { [ "${BASH_REMATCH[1]}" -eq 4 ] && [ "${BASH_REMATCH[2]}" -lt 60 ]; }; }; then
+    info "Docker Desktop ${BASH_REMATCH[1]}.${BASH_REMATCH[2]} is older than 4.60 and has no Landlock: update it"
+  fi
+  info "to retry from scratch: openshell sandbox delete $SANDBOX, then re-run this script"
+}
+
 supported_platform() { [ "$(uname -s)" = "Darwin" ] && [ "$(uname -m)" = "arm64" ]; }
 
 cmd_setup() {
@@ -63,17 +88,20 @@ cmd_setup() {
   docker build -q -t "$IMAGE" "$REPO_ROOT/sandbox" >/dev/null || { fail "image build failed"; return 1; }
   pass "sandbox image built"
 
+  local create_log=""
   if sandbox_exists; then
     cmd_policy || return 1
+    # Left stopped or half-started by an earlier run: try starting it before giving up.
+    sandbox_ready || openshell sandbox start "$SANDBOX" >/dev/null 2>&1
   else
-    info "creating sandbox '$SANDBOX'..."
+    create_log="$(mktemp)"
+    info "creating sandbox '$SANDBOX' (the first start can take a few minutes)..."
     openshell sandbox create --name "$SANDBOX" --from "$IMAGE" \
       --policy "$REPO_ROOT/policies/terminal.yaml" --no-auto-providers -- sleep infinity \
-      >/dev/null 2>&1 &
-    local i
-    for i in $(seq 1 60); do sandbox_ready && break; sleep 2; done
+      >"$create_log" 2>&1 &
   fi
-  sandbox_ready || { fail "sandbox '$SANDBOX' did not become Ready: openshell sandbox get $SANDBOX (Docker Desktop older than 4.60 has no Landlock)"; return 1; }
+  wait_sandbox_ready || { explain_sandbox_failure "$create_log"; return 1; }
+  [ -n "$create_log" ] && rm -f "$create_log"
   openshell settings set --key ocsf_json_enabled --value true "$SANDBOX" >/dev/null 2>&1
   # The agent may ask for narrow network access; only a human approves, never automatically.
   openshell settings set --key agent_policy_proposals_enabled --value true "$SANDBOX" >/dev/null 2>&1
