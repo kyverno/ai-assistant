@@ -290,12 +290,19 @@ for v in COPILOT_GITHUB_TOKEN GH_TOKEN GITHUB_TOKEN; do
   fi
 done
 
-# GitHub Copilot as the model needs its own OAuth token (gho_...), not the repo PAT: the Copilot API
-# rejects PATs, and a GITHUB_TOKEN in .env stops Hermes from offering the login itself.
-if [ "$INTERACTIVE" = 1 ] && [ -z "$(env_get COPILOT_GITHUB_TOKEN)" ]; then
-  read -r -p "  Use GitHub Copilot as the model? Sign in now (device code in your browser) [y/N]: " COPILOT_CHOICE </dev/tty
-  if [[ "$COPILOT_CHOICE" =~ ^[Yy] ]]; then
-    if [ -x "$HERMES_DIR/venv/bin/python" ] && PYTHONPATH="$HERMES_DIR" HERMES_HOME="$PROFILE_DIR" "$HERMES_DIR/venv/bin/python" -c "
+# GitHub Copilot signs in with a device-code login only, never with a PAT. Hermes picks the first valid
+# token among COPILOT_GITHUB_TOKEN, GH_TOKEN and GITHUB_TOKEN, and the Copilot API rejects PATs; a repo
+# PAT in GITHUB_TOKEN also stops Hermes from offering the login itself. Saving the login's token as
+# COPILOT_GITHUB_TOKEN puts it first, so Copilot never reaches the PAT.
+#   KYVERNO_COPILOT_LOGIN=yes  sign in (again) without asking, e.g. after the token expired
+#   KYVERNO_COPILOT_LOGIN=no   skip it
+WANT_COPILOT="${KYVERNO_COPILOT_LOGIN:-}"
+if [ -z "$WANT_COPILOT" ] && [ "$INTERACTIVE" = 1 ] && [ -z "$(env_get COPILOT_GITHUB_TOKEN)" ]; then
+  read -r -p "  Sign in to GitHub Copilot for the model (device code in your browser; skip with n) [Y/n]: " WANT_COPILOT </dev/tty
+  case "$WANT_COPILOT" in [Nn]*) WANT_COPILOT=no ;; *) WANT_COPILOT=yes ;; esac
+fi
+if [ "$WANT_COPILOT" = "yes" ]; then
+  if [ -x "$HERMES_DIR/venv/bin/python" ] && PYTHONPATH="$HERMES_DIR" HERMES_HOME="$PROFILE_DIR" "$HERMES_DIR/venv/bin/python" -c "
 from hermes_cli.copilot_auth import copilot_device_code_login
 from hermes_cli.config import save_env_value
 token = copilot_device_code_login()
@@ -303,10 +310,9 @@ if not token:
     raise SystemExit(1)
 save_env_value('COPILOT_GITHUB_TOKEN', token)
 "; then
-      pass "Copilot signed in (COPILOT_GITHUB_TOKEN saved). Pick it with: hermes -p $PROFILE model"
-    else
-      fail "Copilot sign-in did not finish — retry later with: hermes -p $PROFILE model"
-    fi
+    pass "Copilot signed in (COPILOT_GITHUB_TOKEN saved). Pick it with: hermes -p $PROFILE model"
+  else
+    fail "Copilot sign-in did not finish — retry with: KYVERNO_COPILOT_LOGIN=yes ./scripts/install.sh"
   fi
 fi
 
