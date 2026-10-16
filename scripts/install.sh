@@ -37,6 +37,23 @@ if ! docker info >/dev/null 2>&1; then
 fi
 pass "docker is running"
 
+# The helpers below parse YAML with python3. Use one that has PyYAML: the system python3 if it does,
+# otherwise Hermes' own interpreter (which always does). Without this the model-keeping step fails
+# silently and every re-run resets the model to the shipped default.
+HERMES_DIR=$(hermes --version 2>/dev/null | sed -n 's/^Install directory: //p')
+HERMES_DIR="${HERMES_DIR:-$HOME/.hermes/hermes-agent}"
+PY=""
+for cand in python3 "$HERMES_DIR/venv/bin/python"; do
+  cand_path=$(command -v "$cand" 2>/dev/null) || continue
+  if "$cand_path" -c 'import yaml' >/dev/null 2>&1; then PY="$cand_path"; break; fi
+done
+if [ -z "$PY" ]; then
+  fail "no Python with PyYAML found — run: python3 -m pip install pyyaml   then re-run this script"
+  exit 1
+fi
+python3() { "$PY" "$@"; }
+pass "python with PyYAML ($PY)"
+
 step "2. Profile install"
 
 # The update below resets config.yaml; remember the model the maintainer picked
@@ -229,6 +246,76 @@ fi
 
 pass "all required credentials are filled in ($ENV_FILE)"
 
+# Catch a bad GITHUB_TOKEN now instead of as a 401 from the tools later.
+check_github_token() {
+  GH_TOKEN_VAL="$(env_get GITHUB_TOKEN)" GH_REPO_VAL="$(env_get KYVERNO_REPO)" python3 - <<'PY'
+import os, re, ssl, urllib.error, urllib.request
+tok = os.environ['GH_TOKEN_VAL']
+repo = os.environ['GH_REPO_VAL'] or 'kyverno/kyverno'
+if re.search(r'[\s"\']', tok):
+    print('malformed: the token contains spaces or quotes')
+    raise SystemExit
+if len(re.findall(r'ghp_|github_pat_|gho_|ghu_', tok)) > 1:
+    print('malformed: it looks like two tokens pasted together')
+    raise SystemExit
+try:
+    import certifi
+    ctx = ssl.create_default_context(cafile=certifi.where())
+except ImportError:
+    ctx = None
+req = urllib.request.Request(f'https://api.github.com/repos/{repo}', headers={
+    'Authorization': f'Bearer {tok}', 'User-Agent': 'kyverno-assistant-install'})
+try:
+    urllib.request.urlopen(req, timeout=15, context=ctx)
+    print('ok')
+except urllib.error.HTTPError as exc:
+    print(f'http {exc.code}')
+except Exception as exc:
+    print(f'unreachable: {exc}')
+PY
+}
+TOKEN_STATUS=$(check_github_token)
+case "$TOKEN_STATUS" in
+  ok) pass "GITHUB_TOKEN works for $(env_get KYVERNO_REPO)" ;;
+  http\ 401) fail "GitHub rejected GITHUB_TOKEN (401): it is wrong, expired or revoked — create a new one and fix $ENV_FILE" ;;
+  http\ 403|http\ 404) fail "GITHUB_TOKEN cannot read $(env_get KYVERNO_REPO) (${TOKEN_STATUS#http }): give the fine-grained token access to that repo, or get the org to approve it" ;;
+  malformed*) fail "GITHUB_TOKEN in $ENV_FILE is malformed (${TOKEN_STATUS#malformed: }) — it must be just the one token, no quotes" ;;
+  *) info "could not verify GITHUB_TOKEN (${TOKEN_STATUS:-no answer}) — continuing" ;;
+esac
+
+# Hermes' Copilot provider takes the first of these it finds, ahead of anything it would sign in for.
+for v in COPILOT_GITHUB_TOKEN GH_TOKEN GITHUB_TOKEN; do
+  if [ -n "${!v:-}" ]; then
+    info "warning: your shell exports $v — remove it from your shell startup files if Copilot login misbehaves (the profile .env is what Hermes should use)"
+  fi
+done
+
+# GitHub Copilot signs in with a device-code login only, never with a PAT. Hermes picks the first valid
+# token among COPILOT_GITHUB_TOKEN, GH_TOKEN and GITHUB_TOKEN, and the Copilot API rejects PATs; a repo
+# PAT in GITHUB_TOKEN also stops Hermes from offering the login itself. Saving the login's token as
+# COPILOT_GITHUB_TOKEN puts it first, so Copilot never reaches the PAT.
+#   KYVERNO_COPILOT_LOGIN=yes  sign in (again) without asking, e.g. after the token expired
+#   KYVERNO_COPILOT_LOGIN=no   skip it
+WANT_COPILOT="${KYVERNO_COPILOT_LOGIN:-}"
+if [ -z "$WANT_COPILOT" ] && [ "$INTERACTIVE" = 1 ] && [ -z "$(env_get COPILOT_GITHUB_TOKEN)" ]; then
+  read -r -p "  Sign in to GitHub Copilot for the model (device code in your browser; skip with n) [Y/n]: " WANT_COPILOT </dev/tty
+  case "$WANT_COPILOT" in [Nn]*) WANT_COPILOT=no ;; *) WANT_COPILOT=yes ;; esac
+fi
+if [ "$WANT_COPILOT" = "yes" ]; then
+  if [ -x "$HERMES_DIR/venv/bin/python" ] && PYTHONPATH="$HERMES_DIR" HERMES_HOME="$PROFILE_DIR" "$HERMES_DIR/venv/bin/python" -c "
+from hermes_cli.copilot_auth import copilot_device_code_login
+from hermes_cli.config import save_env_value
+token = copilot_device_code_login()
+if not token:
+    raise SystemExit(1)
+save_env_value('COPILOT_GITHUB_TOKEN', token)
+"; then
+    pass "Copilot signed in (COPILOT_GITHUB_TOKEN saved). Pick it with: hermes -p $PROFILE model"
+  else
+    fail "Copilot sign-in did not finish — retry with: KYVERNO_COPILOT_LOGIN=yes ./scripts/install.sh"
+  fi
+fi
+
 # Put back the maintainer's model choice (the profile update reset it).
 if [ -n "$MODEL_KEEP" ]; then
   while IFS=$'\t' read -r key value; do
@@ -408,6 +495,17 @@ if [ -z "$WANT_SANDBOX" ] && [ "$INTERACTIVE" = 1 ]; then
   info "write anywhere you haven't allowed (policies/terminal.yaml)."
   read -r -p "  Set it up? [Y/n]: " WANT_SANDBOX </dev/tty
   case "$WANT_SANDBOX" in [Nn]*) WANT_SANDBOX=no ;; *) WANT_SANDBOX=yes ;; esac
+fi
+if [ "$WANT_SANDBOX" = "yes" ]; then
+  # The sandbox needs Landlock, which Docker Desktop only has from 4.60.
+  DOCKER_PLATFORM=$(docker version --format '{{.Server.Platform.Name}}' 2>/dev/null)
+  DESKTOP_RE='Docker Desktop ([0-9]+)\.([0-9]+)'
+  if [[ "$DOCKER_PLATFORM" =~ $DESKTOP_RE ]]; then
+    if [ "${BASH_REMATCH[1]}" -lt 4 ] || { [ "${BASH_REMATCH[1]}" -eq 4 ] && [ "${BASH_REMATCH[2]}" -lt 60 ]; }; then
+      fail "Docker Desktop ${BASH_REMATCH[1]}.${BASH_REMATCH[2]} is older than 4.60 and has no Landlock — update it and re-run; skipping the sandbox for now"
+      WANT_SANDBOX=no
+    fi
+  fi
 fi
 if [ "$WANT_SANDBOX" = "yes" ]; then
   if ./scripts/openshell.sh setup; then
