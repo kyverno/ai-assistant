@@ -1,0 +1,220 @@
+#!/bin/bash
+# Runs inside the OpenShell sandbox: sets the assistant up on the first run, then starts the chat.
+# The launcher calls it with:  openshell sandbox exec --tty -- kyverno-start [--repo R] [--login L]
+# It is idempotent: later runs skip what is already done.
+#
+#   KYVERNO_SETUP_ONLY=1   stop after setup (no sign-in, no chat)
+#   KYVERNO_SKIP_COPILOT=1 don't offer the Copilot sign-in
+set -uo pipefail
+
+export HERMES_HOME=/opt/hermes-home/.hermes
+export PATH="/opt/hermes-home/.local/bin:$PATH"
+PROFILE=kyverno
+SRC="/opt/kyverno/profiles/${KYVERNO_PROFILE:-maintainer}"
+PROFILE_DIR="$HERMES_HOME/profiles/$PROFILE"
+ENV_FILE="$PROFILE_DIR/.env"
+DONE_MARK="$PROFILE_DIR/.kyverno-container-setup"
+HERMES_PY=$(ls -d /opt/hermes-home/.hermes/tools/python-*/bin/python3 2>/dev/null | head -n 1)
+
+pass() { printf '  \033[32m✓\033[0m %s\n' "$1"; }
+fail() { printf '  \033[31m✗\033[0m %s\n' "$1" >&2; }
+info() { printf '  %s\n' "$1"; }
+step() { printf '\n\033[1m%s\033[0m\n' "$1"; }
+
+REPO="${KYVERNO_REPO:-}"
+LOGIN="${MAINTAINER_GITHUB_LOGIN:-}"
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --repo) REPO="${2:-}"; shift 2 ;;
+    --login) LOGIN="${2:-}"; shift 2 ;;
+    --) shift; break ;;
+    *) break ;;
+  esac
+done
+
+step "Checks"
+if [ ! -d /run/openshell-supervisor-ca ]; then
+  fail "this is not running inside an OpenShell sandbox — start it with the launcher (container/kyverno)"
+  exit 1
+fi
+if [ -z "${REPO_GITHUB_TOKEN:-}" ]; then
+  fail "REPO_GITHUB_TOKEN is not set — the sandbox was created without the GitHub provider; re-run the launcher"
+  exit 1
+fi
+if [ -z "$HERMES_PY" ]; then
+  fail "Hermes' Python was not found under $HERMES_HOME/tools"
+  exit 1
+fi
+# REPO_GITHUB_TOKEN holds an opaque placeholder here, never the real token: the proxy swaps it in on
+# requests to GitHub. The profile's config.yaml still says ${GITHUB_TOKEN}, so give it the same value.
+export GITHUB_TOKEN="$REPO_GITHUB_TOKEN"
+pass "inside an OpenShell sandbox; GitHub token is a placeholder, the real one stays outside"
+
+# --- helpers on the .env file (plain text, no YAML needed) ---
+env_get() {
+  ENV_FILE="$ENV_FILE" KEY="$1" python3 -c "
+import os
+for line in open(os.environ['ENV_FILE']):
+    line = line.strip()
+    if line and not line.startswith('#') and '=' in line:
+        k, _, v = line.partition('=')
+        if k.strip() == os.environ['KEY']:
+            print(v.strip()); break
+" 2>/dev/null
+}
+env_set() {
+  ENV_FILE="$ENV_FILE" KEY="$1" VALUE="$2" python3 -c "
+import os
+path, key, value = os.environ['ENV_FILE'], os.environ['KEY'], os.environ['VALUE']
+lines = open(path).read().splitlines()
+for i, line in enumerate(lines):
+    if line.split('=', 1)[0].strip() == key and not line.lstrip().startswith('#'):
+        lines[i] = f'{key}={value}'
+        break
+else:
+    lines.append(f'{key}={value}')
+open(path, 'w').write('\n'.join(lines) + '\n')
+"
+}
+
+step "Profile"
+if [ ! -f "$PROFILE_DIR/distribution.yaml" ]; then
+  info "installing the '$PROFILE' profile..."
+  if ! hermes profile install "$SRC" --name "$PROFILE" -y; then
+    fail "hermes profile install failed — see output above"
+    exit 1
+  fi
+  pass "profile installed"
+else
+  pass "profile already installed"
+fi
+
+if [ ! -f "$DONE_MARK" ]; then
+  # Same curation as scripts/install.sh: this distribution's skills plus a small set of Hermes ones.
+  hermes -p "$PROFILE" skills reset hermes-agent --restore --yes >/dev/null 2>&1
+  hermes -p "$PROFILE" skills opt-in --sync >/dev/null 2>&1
+  (cd "$SRC" && python3 - "$PROFILE_DIR/skills" <<'PY'
+import shutil, sys
+from pathlib import Path
+root = Path(sys.argv[1])
+keep = {p.parent.name for p in Path("skills").glob("*/SKILL.md")} | set("""
+hermes-agent codebase-inspection dogfood github hermes-agent-skill-authoring
+inspecting-hermes-desktop-dom node-inspect-debugger python-debugpy requesting-code-review
+simplify-code spike systematic-debugging test-driven-development
+arxiv competitor-news-monitor grounded-citations llm-wiki blocked-page-recovery sdlc-review
+""".split())
+for skill in sorted(root.rglob("SKILL.md")):
+    if ".archive" not in skill.parts and skill.parent.name not in keep:
+        shutil.rmtree(skill.parent)
+for d in sorted((q for q in root.rglob("*") if q.is_dir()), reverse=True):
+    if not any(d.iterdir()):
+        d.rmdir()
+PY
+  )
+  hermes -p "$PROFILE" skills opt-out >/dev/null 2>&1
+  pass "skills curated"
+
+  # Hermes runs hook commands relative to where it was started; pin them to the profile directory.
+  python3 - "$PROFILE_DIR" <<'PY'
+import sys
+d = sys.argv[1]
+p = d + "/config.yaml"
+s = open(p).read()
+open(p, "w").write(s.replace('command: "./hooks/', 'command: "' + d + '/hooks/'))
+PY
+  pass "hook scripts pinned to $PROFILE_DIR/hooks"
+
+  # The terminal and file tools run locally, inside this sandbox, and the hook above only allows that
+  # here. Slack comes later: its MCP server runs under Docker, which a sandbox doesn't have.
+  python3 - "$PROFILE_DIR/config.yaml" <<'PY'
+import re, sys
+p = sys.argv[1]
+s = open(p).read()
+for tool in ("terminal", "file"):
+    if not re.search(r"(?m)^    - %s$" % tool, s):
+        s = s.replace("    - cronjob\n", "    - cronjob\n    - %s\n" % tool, 1)
+s = re.sub(r"(?m)^    - mcp-slack\n", "", s)
+open(p, "w").write(s)
+PY
+  hermes -p "$PROFILE" mcp remove slack >/dev/null 2>&1
+  for kv in terminal.backend=local terminal.cwd=/sandbox; do
+    hermes -p "$PROFILE" config set "${kv%%=*}" "${kv#*=}" >/dev/null 2>&1
+  done
+  pass "terminal runs locally in the sandbox; Slack left out for now"
+fi
+
+step "Settings"
+if [ ! -f "$ENV_FILE" ]; then
+  if [ -f "$PROFILE_DIR/.env.EXAMPLE" ]; then cp "$PROFILE_DIR/.env.EXAMPLE" "$ENV_FILE"; else : > "$ENV_FILE"; fi
+fi
+# The token is deliberately not in this file. Only who you are and which repo.
+if [ -z "$(env_get KYVERNO_REPO)" ]; then
+  [ -z "$REPO" ] && read -r -p "  Repo to manage (owner/repo) [kyverno/kyverno]: " REPO
+  env_set KYVERNO_REPO "${REPO:-kyverno/kyverno}"
+fi
+if [ -z "$(env_get MAINTAINER_GITHUB_LOGIN)" ]; then
+  [ -z "$LOGIN" ] && read -r -p "  Your GitHub username: " LOGIN
+  [ -n "$LOGIN" ] && env_set MAINTAINER_GITHUB_LOGIN "$LOGIN"
+fi
+pass "repo $(env_get KYVERNO_REPO), maintainer $(env_get MAINTAINER_GITHUB_LOGIN)"
+
+# Hermes only fills ${HERMES_SKILL_DIR}-style variables in skills; resolve ours from .env.
+if [ ! -f "$DONE_MARK" ]; then
+  ENV_FILE="$ENV_FILE" python3 - "$PROFILE_DIR" <<'PY'
+import glob, os, sys
+values = {}
+for line in open(os.environ["ENV_FILE"]):
+    line = line.strip()
+    if line and not line.startswith("#") and "=" in line:
+        k, _, v = line.partition("=")
+        values[k.strip()] = v.strip()
+for var in ("KYVERNO_REPO", "MAINTAINER_GITHUB_LOGIN"):
+    val = values.get(var)
+    if not val:
+        continue
+    token = "${" + var + "}"
+    for path in glob.glob(sys.argv[1] + "/skills/*/SKILL.md"):
+        text = open(path).read()
+        if token in text:
+            open(path, "w").write(text.replace(token, val))
+PY
+  touch "$DONE_MARK"
+  pass "skill instructions resolved to your repo and login"
+fi
+
+if [ "${KYVERNO_SETUP_ONLY:-}" = 1 ]; then
+  info "setup only: stopping before sign-in and chat"
+  exit 0
+fi
+
+# --- GitHub Copilot as the model: the device-code login, like the Copilot CLI's ---
+NEW_LOGIN=0
+if [ "${KYVERNO_SKIP_COPILOT:-}" != 1 ] && [ -z "$(env_get COPILOT_GITHUB_TOKEN)" ]; then
+  step "GitHub Copilot sign-in"
+  info "Open the page it prints in your browser on your laptop, enter the code, and approve."
+  if HERMES_HOME="$PROFILE_DIR" "$HERMES_PY" -I - <<'PY'
+import sys
+sys.path.insert(0, "/opt/hermes")
+import hermes_bootstrap
+from hermes_cli.copilot_auth import copilot_device_code_login
+from hermes_cli.config import save_env_value
+token = copilot_device_code_login()
+if not token:
+    raise SystemExit(1)
+save_env_value("COPILOT_GITHUB_TOKEN", token)
+PY
+  then
+    pass "Copilot signed in"
+    NEW_LOGIN=1
+  else
+    fail "Copilot sign-in did not finish — run kyverno-start again to retry"
+  fi
+fi
+if [ "$NEW_LOGIN" = 1 ]; then
+  step "Model"
+  info "Choose GitHub Copilot and a model."
+  hermes -p "$PROFILE" model
+fi
+
+step "Starting"
+exec hermes -p "$PROFILE" chat "$@"

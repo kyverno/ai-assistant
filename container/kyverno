@@ -1,0 +1,149 @@
+#!/bin/bash
+# One command to run the Kyverno assistant inside an OpenShell sandbox.
+#
+#   container/kyverno [--image IMAGE | --build] [--name NAME] [--reset]
+#
+# What it does, each time: checks Docker, installs OpenShell if it is missing, registers your GitHub
+# token with OpenShell (asked once, kept outside the sandbox), creates or starts the sandbox, applies
+# its network policy, and opens the assistant in it. Everything else lives in the image.
+#
+#   --build        build the image from this checkout (container/Dockerfile) instead of pulling one
+#   --image IMAGE  use this image (default: $KYVERNO_IMAGE, else ghcr.io/kyverno/ai-assistant:latest)
+#   --name NAME    sandbox name (default: kyverno-assistant)
+#   --reset        forget the stored GitHub token and ask for it again
+set -uo pipefail
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$HERE/.." && pwd)"
+OPENSHELL_VERSION="${OPENSHELL_VERSION:-v0.1.3}"
+IMAGE="${KYVERNO_IMAGE:-ghcr.io/kyverno/ai-assistant:latest}"
+SANDBOX="kyverno-assistant"
+PROVIDER="kyverno-repo-github"
+BUILD=0
+RESET=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --build) BUILD=1; shift ;;
+    --image) IMAGE="${2:-}"; shift 2 ;;
+    --name) SANDBOX="${2:-}"; shift 2 ;;
+    --reset) RESET=1; shift ;;
+    -h|--help) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) echo "unknown option: $1 (see --help)" >&2; exit 2 ;;
+  esac
+done
+
+pass() { printf '  \033[32m✓\033[0m %s\n' "$1"; }
+fail() { printf '  \033[31m✗\033[0m %s\n' "$1" >&2; }
+info() { printf '  %s\n' "$1"; }
+step() { printf '\n\033[1m%s\033[0m\n' "$1"; }
+
+step "1. Docker and OpenShell"
+if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
+  fail "Docker is not installed or not running — start Docker Desktop (4.60 or newer) and re-run"
+  exit 1
+fi
+pass "docker is running"
+
+if ! command -v openshell >/dev/null 2>&1; then
+  info "installing OpenShell $OPENSHELL_VERSION (CLI and background gateway)..."
+  curl -LsSf https://raw.githubusercontent.com/NVIDIA/OpenShell/main/install.sh \
+    | OPENSHELL_VERSION="$OPENSHELL_VERSION" sh || { fail "OpenShell install failed"; exit 1; }
+  hash -r
+fi
+# Docker Desktop runs containers in a VM, so a sandbox cannot reach the gateway on the Mac's
+# 127.0.0.1 (OpenShell issue #3880); point it at host.docker.internal. Same fix as scripts/openshell.sh.
+toml="$(brew --prefix 2>/dev/null)/var/openshell/gateway.toml"
+if docker info --format '{{.OperatingSystem}}' 2>/dev/null | grep -qi "docker desktop" && [ -f "$toml" ] \
+   && ! grep -q 'grpc_endpoint' "$toml"; then
+  cp "$toml" "$toml.bak-kyverno"
+  printf '\n[openshell.drivers.docker]\ngrpc_endpoint = "https://host.docker.internal:17670"\n' >> "$toml"
+  brew services restart openshell >/dev/null 2>&1
+  sleep 5
+  pass "gateway pointed at host.docker.internal for Docker Desktop (backup: $toml.bak-kyverno)"
+fi
+openshell status >/dev/null 2>&1 || { fail "the OpenShell gateway is not reachable — run: openshell status"; exit 1; }
+pass "OpenShell $(openshell --version 2>/dev/null | head -n 1)"
+
+step "2. Image"
+if [ "$BUILD" = 1 ]; then
+  IMAGE="kyverno-assistant:dev"
+  info "building $IMAGE from this checkout (the first build takes several minutes)..."
+  docker build -f "$REPO_ROOT/container/Dockerfile" -t "$IMAGE" "$REPO_ROOT" || { fail "image build failed"; exit 1; }
+elif ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
+  info "pulling $IMAGE..."
+  docker pull "$IMAGE" || { fail "could not pull $IMAGE — use --build, or --image with an image you have"; exit 1; }
+fi
+pass "image $IMAGE"
+
+step "3. GitHub token"
+if ! openshell profile list --type provider 2>/dev/null | grep -q "$PROVIDER"; then
+  openshell profile import -f "$HERE/providers/repo-github.yaml" >/dev/null 2>&1 \
+    || { fail "could not register the provider profile (container/providers/repo-github.yaml)"; exit 1; }
+fi
+if [ "$RESET" = 1 ]; then
+  if openshell sandbox list 2>/dev/null | grep -q "^$SANDBOX "; then
+    fail "the sandbox '$SANDBOX' still uses the stored token — remove it first: openshell sandbox delete $SANDBOX"
+    exit 1
+  fi
+  openshell provider delete "$PROVIDER" >/dev/null 2>&1
+fi
+REPO="${KYVERNO_REPO:-}"
+LOGIN="${MAINTAINER_GITHUB_LOGIN:-}"
+if openshell provider get "$PROVIDER" >/dev/null 2>&1; then
+  pass "GitHub token already stored in OpenShell (use --reset to replace it)"
+else
+  [ -z "$REPO" ] && read -r -p "  Repo to manage (owner/repo) [kyverno/kyverno]: " REPO
+  REPO="${REPO:-kyverno/kyverno}"
+  info "Paste your fine-grained GitHub token (see README step 2). It goes to OpenShell, never into the sandbox."
+  PAT=""
+  { read -r -s -p "  GitHub token: " PAT </dev/tty; } 2>/dev/null
+  echo
+  [ -z "$PAT" ] && { fail "no token entered (this step needs a terminal to ask for it)"; exit 1; }
+  # Check it before storing it. The token goes in through stdin, so it never shows in a process list.
+  CODE=$(printf 'header = "Authorization: Bearer %s"\n' "$PAT" \
+         | curl -s -o /dev/null -w '%{http_code}' -K - "https://api.github.com/repos/$REPO")
+  case "$CODE" in
+    200) pass "GitHub accepts the token for $REPO" ;;
+    401) fail "GitHub rejected the token (401): wrong, expired or revoked"; exit 1 ;;
+    403|404) fail "the token cannot read $REPO ($CODE): scope it to that repo, or get the org to approve it"; exit 1 ;;
+    *) info "could not verify the token (HTTP ${CODE:-none}) — continuing" ;;
+  esac
+  REPO_GITHUB_TOKEN="$PAT" openshell provider create --name "$PROVIDER" --type "$PROVIDER" \
+    --credential REPO_GITHUB_TOKEN >/dev/null 2>&1 || { fail "could not store the token in OpenShell"; exit 1; }
+  unset PAT
+  pass "token stored in OpenShell"
+fi
+
+step "4. Sandbox"
+if openshell sandbox list 2>/dev/null | grep -q "^$SANDBOX "; then
+  if openshell sandbox list 2>/dev/null | grep "^$SANDBOX " | grep -q Stopped; then
+    openshell sandbox start "$SANDBOX" >/dev/null 2>&1 && info "started '$SANDBOX'"
+  fi
+else
+  LOG="$(mktemp)"
+  info "creating '$SANDBOX' (the first start can take a few minutes)..."
+  openshell sandbox create --name "$SANDBOX" --from "$IMAGE" --provider "$PROVIDER" \
+    --policy "$HERE/policy.yaml" --no-auto-providers -- sleep infinity >"$LOG" 2>&1 &
+fi
+READY=0
+for _ in $(seq 1 150); do
+  if openshell sandbox list 2>/dev/null | awk -v n="$SANDBOX" '$1==n && $NF=="Ready"{f=1} END{exit !f}'; then READY=1; break; fi
+  sleep 2
+done
+if [ "$READY" != 1 ]; then
+  fail "sandbox '$SANDBOX' did not become Ready"
+  openshell sandbox get "$SANDBOX" 2>&1 | head -n 15 | sed 's/^/    /' >&2
+  [ -n "${LOG:-}" ] && [ -s "$LOG" ] && tail -n 15 "$LOG" | sed 's/^/    /' >&2
+  info "to retry from scratch: openshell sandbox delete $SANDBOX, then re-run"
+  exit 1
+fi
+[ -n "${LOG:-}" ] && rm -f "$LOG"
+openshell policy set --policy "$HERE/policy.yaml" --wait "$SANDBOX" >/dev/null 2>&1 \
+  && pass "policy applied" || info "could not re-apply the policy; the one from creation stays in force"
+pass "sandbox '$SANDBOX' is ready"
+
+step "5. Assistant"
+ARGS=()
+[ -n "$REPO" ] && ARGS+=(--repo "$REPO")
+[ -n "$LOGIN" ] && ARGS+=(--login "$LOGIN")
+exec openshell sandbox exec -n "$SANDBOX" --tty -- kyverno-start "${ARGS[@]+"${ARGS[@]}"}"

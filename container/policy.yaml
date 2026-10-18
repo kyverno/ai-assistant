@@ -1,0 +1,100 @@
+version: 1
+
+# Policy for the whole assistant sandbox (Hermes and its terminal run inside it).
+# Filesystem rules are fixed when the sandbox is created; network rules reload on a live sandbox.
+
+filesystem_policy:
+  include_workdir: true
+  # /opt/hermes (Hermes' code) and /opt/kyverno (the baked profile) stay read-only.
+  read_only: [/usr, /lib, /bin, /sbin, /etc, /proc, /dev/urandom, /app, /var/log, /opt/hermes, /opt/kyverno]
+  # /opt/hermes-home is Hermes' home: profile, state, memory and its dependency environment.
+  read_write: [/sandbox, /tmp, /dev/null, /opt/hermes-home]
+landlock:
+  compatibility: hard_requirement
+
+# Anything not listed here is denied. The GitHub PAT's endpoints (REST and GraphQL reads, the GitHub
+# MCP server) come from the provider profile, container/providers/repo-github.yaml.
+network_policies:
+
+  # The agent's terminal: read-only GitHub with no credential, for reproducing issues.
+  github_read:
+    name: github_read
+    endpoints:
+      - host: api.github.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/**" }
+      - host: github.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: POST, path: "/**/git-upload-pack" }
+      - host: codeload.github.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/**" }
+      - host: raw.githubusercontent.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/**" }
+    binaries:
+      - { path: /usr/bin/curl }
+      - { path: /usr/bin/git }
+      - { path: /usr/lib/git-core/git-remote-https }
+
+  # GitHub Copilot sign-in (device code), done by Hermes' own login. Only these two login paths.
+  copilot_login:
+    name: copilot_login
+    endpoints:
+      - host: github.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: POST, path: "/login/device/code" }
+          - allow: { method: POST, path: "/login/oauth/access_token" }
+    binaries:
+      - { path: "/opt/hermes-home/.hermes/tools/python-*/bin/python*" }
+
+  # GitHub Copilot as the model: inference and model lists. Hermes holds its own Copilot token.
+  copilot_inference:
+    name: copilot_inference
+    endpoints:
+      - host: api.githubcopilot.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: POST, path: "/**" }
+      - host: api.individual.githubcopilot.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: POST, path: "/**" }
+      - host: api.business.githubcopilot.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: POST, path: "/**" }
+      - host: api.enterprise.githubcopilot.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: POST, path: "/**" }
+    binaries:
+      - { path: "/opt/hermes-home/.hermes/tools/python-*/bin/python*" }

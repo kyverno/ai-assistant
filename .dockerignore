@@ -1,0 +1,9 @@
+# The image build copies explicit paths only; this keeps secrets and bulk out of the build context.
+.git
+.env
+.env.*
+!.env.example
+docs/spikes
+**/__pycache__
+**/*.pyc
+.hermes-data
