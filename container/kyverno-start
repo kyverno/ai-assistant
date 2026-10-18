@@ -77,6 +77,10 @@ open(path, 'w').write('\n'.join(lines) + '\n')
 "
 }
 
+# Setup steps must never wait on a prompt: Hermes asks for confirmation on some commands when a
+# terminal is attached, and their output is hidden here. So no stdin, a time limit, no output.
+hq() { timeout 180 hermes -p "$PROFILE" "$@" </dev/null >/dev/null 2>&1; }
+
 step "Profile"
 if [ ! -f "$PROFILE_DIR/distribution.yaml" ]; then
   info "installing the '$PROFILE' profile..."
@@ -91,8 +95,9 @@ fi
 
 if [ ! -f "$DONE_MARK" ]; then
   # Same curation as scripts/install.sh: this distribution's skills plus a small set of Hermes ones.
-  hermes -p "$PROFILE" skills reset hermes-agent --restore --yes >/dev/null 2>&1
-  hermes -p "$PROFILE" skills opt-in --sync >/dev/null 2>&1
+  info "setting up skills (a minute or so)..."
+  hq skills reset hermes-agent --restore --yes
+  hq skills opt-in --sync
   (cd "$SRC" && python3 - "$PROFILE_DIR/skills" <<'PY'
 import shutil, sys
 from pathlib import Path
@@ -111,7 +116,7 @@ for d in sorted((q for q in root.rglob("*") if q.is_dir()), reverse=True):
         d.rmdir()
 PY
   )
-  hermes -p "$PROFILE" skills opt-out >/dev/null 2>&1
+  hq skills opt-out
   pass "skills curated"
 
   # Hermes runs hook commands relative to where it was started; pin them to the profile directory.
@@ -136,9 +141,9 @@ for tool in ("terminal", "file"):
 s = re.sub(r"(?m)^    - mcp-slack\n", "", s)
 open(p, "w").write(s)
 PY
-  hermes -p "$PROFILE" mcp remove slack >/dev/null 2>&1
+  hq mcp remove slack
   for kv in terminal.backend=local terminal.cwd=/sandbox; do
-    hermes -p "$PROFILE" config set "${kv%%=*}" "${kv#*=}" >/dev/null 2>&1
+    hq config set "${kv%%=*}" "${kv#*=}"
   done
   pass "terminal runs locally in the sandbox; Slack left out for now"
 fi
