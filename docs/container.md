@@ -118,6 +118,34 @@ agent, so the agent can edit its own `config.yaml` and hooks. Layers 1, 2 and 5 
 | Image build is slow or fails to pull | Docker Desktop's VM memory. 8 GB hosts leave Docker about 4 GB |
 | Needs the real reason a sandbox is not Ready | The launcher prints the sandbox state and the last lines of its create log |
 
+## Publishing the image (maintainers)
+
+Users can always build the image themselves with `container/kyverno --build`. To let them download it instead
+(a few minutes, and identical for everyone), `.github/workflows/container-image.yml` builds it in CI and publishes
+it to the GitHub Container Registry as `ghcr.io/<owner>/ai-assistant`, one multi-architecture image for Apple
+Silicon / arm64 Linux and Intel / amd64 Linux. Each architecture is built on a native runner.
+
+To release: push a tag.
+
+```bash
+git tag v1.0.0 && git push origin v1.0.0     # publishes v1.0.0 and moves "latest"
+```
+
+Running the workflow by hand from the Actions tab publishes the `edge` tag and leaves `latest` alone.
+
+One-time setup for an org admin:
+
+1. Allow the repository's workflows to publish packages (the workflow asks for `packages: write`).
+2. After the first publish, open the package's settings and make it **public**. New packages are private, and the
+   launcher pulls without logging in.
+
+The launcher pulls `ghcr.io/kyverno/ai-assistant:latest` by default. A fork or a different registry can set
+`KYVERNO_IMAGE` or pass `--image`.
+
+**Not tested yet:** the workflow has not been run, and the Intel (amd64) image has not been built or run. The
+Dockerfile is architecture-neutral by design (the Hermes installer picks the right tools for the machine), but the
+first amd64 build is the real test.
+
 ## How the image is built, and why
 
 Anything Hermes would fetch, install or ask on first use is done when the image is built:

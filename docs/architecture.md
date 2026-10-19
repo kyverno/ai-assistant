@@ -1,5 +1,7 @@
 # Architecture
 
+> **In the sandbox deployment** the agent runs inside an OpenShell sandbox, which adds a network proxy that swaps in the GitHub token and refuses merges, repository deletion and GraphQL mutations. See [`container.md`](container.md) for those extra layers. This document describes the design and the layers common to both setups.
+
 kyverno-assistant is a [Hermes profile distribution](https://hermes-agent.nousresearch.com/docs/user-guide/profile-distributions):
 `distribution.yaml` + `SOUL.md` + `config.yaml` + `skills/` + `plugins/` + `hooks/` +
 `cron/`, git-installed with `hermes profile install`, updated with `hermes profile update`.

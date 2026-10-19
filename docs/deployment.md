@@ -1,5 +1,7 @@
 # Deployment
 
+> **Running in the OpenShell sandbox?** That is now the recommended way, and it has its own instructions: see the [README](../README.md) and [`container.md`](container.md). This runbook covers the host install.
+
 kyverno-assistant is a Hermes profile distribution — there's no server to stand
 up, no webhook receiver, no GitHub App to register. Install flow only.
 
