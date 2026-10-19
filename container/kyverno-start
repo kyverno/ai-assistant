@@ -1,19 +1,20 @@
 #!/bin/bash
-# Runs inside the OpenShell sandbox: sets the assistant up on the first run, then starts the chat.
-# The launcher calls it with:  openshell sandbox exec --tty -- kyverno-start [--repo R] [--login L]
+# Runs inside the OpenShell sandbox: what is specific to you on the first run, then the chat.
+# The profile, its skills, hooks and memory plugin are already in the image (container/setup-profile.sh
+# ran when it was built), so this is quick. The launcher calls it with:
+#   openshell sandbox exec --tty -- kyverno-start [--repo R] [--login L]
 # It is idempotent: later runs skip what is already done.
 #
-#   KYVERNO_SETUP_ONLY=1   stop after setup (no sign-in, no chat)
-#   KYVERNO_SKIP_COPILOT=1 don't offer the Copilot sign-in
+#   KYVERNO_SETUP_ONLY=1    stop after setup (no sign-in, no chat)
+#   KYVERNO_SKIP_COPILOT=1  don't offer the Copilot sign-in
 set -uo pipefail
 
 export HERMES_HOME=/opt/hermes-home/.hermes
 export PATH="/opt/hermes-home/.local/bin:$PATH"
 PROFILE=kyverno
-SRC="/opt/kyverno/profiles/${KYVERNO_PROFILE:-maintainer}"
 PROFILE_DIR="$HERMES_HOME/profiles/$PROFILE"
 ENV_FILE="$PROFILE_DIR/.env"
-DONE_MARK="$PROFILE_DIR/.kyverno-container-setup"
+DONE_MARK="$PROFILE_DIR/.kyverno-user-setup"
 HERMES_PY=$(ls -d /opt/hermes-home/.hermes/tools/python-*/bin/python3 2>/dev/null | head -n 1)
 
 pass() { printf '  \033[32m✓\033[0m %s\n' "$1"; }
@@ -41,8 +42,8 @@ if [ -z "${REPO_GITHUB_TOKEN:-}" ]; then
   fail "REPO_GITHUB_TOKEN is not set — the sandbox was created without the GitHub provider; re-run the launcher"
   exit 1
 fi
-if [ -z "$HERMES_PY" ]; then
-  fail "Hermes' Python was not found under $HERMES_HOME/tools"
+if [ -z "$HERMES_PY" ] || [ ! -f "$PROFILE_DIR/distribution.yaml" ]; then
+  fail "the Hermes profile is missing from the image — rebuild it: container/kyverno --build"
   exit 1
 fi
 # REPO_GITHUB_TOKEN holds an opaque placeholder here, never the real token: the proxy swaps it in on
@@ -77,81 +78,8 @@ open(path, 'w').write('\n'.join(lines) + '\n')
 "
 }
 
-# Setup steps must never wait on a prompt: Hermes asks for confirmation on some commands when a
-# terminal is attached, and their output is hidden here. So no stdin, a time limit, no output.
-hq() { timeout 180 hermes -p "$PROFILE" "$@" </dev/null >/dev/null 2>&1; }
-
-step "Profile"
-if [ ! -f "$PROFILE_DIR/distribution.yaml" ]; then
-  info "installing the '$PROFILE' profile..."
-  if ! hermes profile install "$SRC" --name "$PROFILE" -y; then
-    fail "hermes profile install failed — see output above"
-    exit 1
-  fi
-  pass "profile installed"
-else
-  pass "profile already installed"
-fi
-
-if [ ! -f "$DONE_MARK" ]; then
-  # Same curation as scripts/install.sh: this distribution's skills plus a small set of Hermes ones.
-  info "setting up skills (a minute or so)..."
-  hq skills reset hermes-agent --restore --yes
-  hq skills opt-in --sync
-  (cd "$SRC" && python3 - "$PROFILE_DIR/skills" <<'PY'
-import shutil, sys
-from pathlib import Path
-root = Path(sys.argv[1])
-keep = {p.parent.name for p in Path("skills").glob("*/SKILL.md")} | set("""
-hermes-agent codebase-inspection dogfood github hermes-agent-skill-authoring
-inspecting-hermes-desktop-dom node-inspect-debugger python-debugpy requesting-code-review
-simplify-code spike systematic-debugging test-driven-development
-arxiv competitor-news-monitor grounded-citations llm-wiki blocked-page-recovery sdlc-review
-""".split())
-for skill in sorted(root.rglob("SKILL.md")):
-    if ".archive" not in skill.parts and skill.parent.name not in keep:
-        shutil.rmtree(skill.parent)
-for d in sorted((q for q in root.rglob("*") if q.is_dir()), reverse=True):
-    if not any(d.iterdir()):
-        d.rmdir()
-PY
-  )
-  hq skills opt-out
-  pass "skills curated"
-
-  # Hermes runs hook commands relative to where it was started; pin them to the profile directory.
-  python3 - "$PROFILE_DIR" <<'PY'
-import sys
-d = sys.argv[1]
-p = d + "/config.yaml"
-s = open(p).read()
-open(p, "w").write(s.replace('command: "./hooks/', 'command: "' + d + '/hooks/'))
-PY
-  pass "hook scripts pinned to $PROFILE_DIR/hooks"
-
-  # The terminal and file tools run locally, inside this sandbox, and the hook above only allows that
-  # here. Slack comes later: its MCP server runs under Docker, which a sandbox doesn't have.
-  python3 - "$PROFILE_DIR/config.yaml" <<'PY'
-import re, sys
-p = sys.argv[1]
-s = open(p).read()
-for tool in ("terminal", "file"):
-    if not re.search(r"(?m)^    - %s$" % tool, s):
-        s = s.replace("    - cronjob\n", "    - cronjob\n    - %s\n" % tool, 1)
-s = re.sub(r"(?m)^    - mcp-slack\n", "", s)
-open(p, "w").write(s)
-PY
-  hq mcp remove slack
-  for kv in terminal.backend=local terminal.cwd=/sandbox; do
-    hq config set "${kv%%=*}" "${kv#*=}"
-  done
-  pass "terminal runs locally in the sandbox; Slack left out for now"
-fi
-
 step "Settings"
-if [ ! -f "$ENV_FILE" ]; then
-  if [ -f "$PROFILE_DIR/.env.EXAMPLE" ]; then cp "$PROFILE_DIR/.env.EXAMPLE" "$ENV_FILE"; else : > "$ENV_FILE"; fi
-fi
+[ -f "$ENV_FILE" ] || { [ -f "$PROFILE_DIR/.env.EXAMPLE" ] && cp "$PROFILE_DIR/.env.EXAMPLE" "$ENV_FILE" || : > "$ENV_FILE"; }
 # The token is deliberately not in this file. Only who you are and which repo.
 if [ -z "$(env_get KYVERNO_REPO)" ]; then
   [ -z "$REPO" ] && read -r -p "  Repo to manage (owner/repo) [kyverno/kyverno]: " REPO
@@ -192,11 +120,16 @@ if [ "${KYVERNO_SETUP_ONLY:-}" = 1 ]; then
   exit 0
 fi
 
-# --- GitHub Copilot as the model: the device-code login, like the Copilot CLI's ---
+# --- Model. A provider key held by OpenShell shows up as a placeholder env var; otherwise sign in
+# --- to GitHub Copilot with Hermes' own device-code login, like the Copilot CLI's. ---
+HAS_PROVIDER_KEY=0
+for v in ANTHROPIC_API_KEY OPENAI_API_KEY NVIDIA_API_KEY; do [ -n "${!v:-}" ] && HAS_PROVIDER_KEY=1; done
+
 NEW_LOGIN=0
-if [ "${KYVERNO_SKIP_COPILOT:-}" != 1 ] && [ -z "$(env_get COPILOT_GITHUB_TOKEN)" ]; then
+if [ "${KYVERNO_SKIP_COPILOT:-}" != 1 ] && [ -z "$(env_get COPILOT_GITHUB_TOKEN)" ] && [ "$HAS_PROVIDER_KEY" = 0 ]; then
   step "GitHub Copilot sign-in"
   info "Open the page it prints in your browser on your laptop, enter the code, and approve."
+  info "(To use another model provider instead, quit and start the launcher with --provider anthropic|openai|nvidia.)"
   if HERMES_HOME="$PROFILE_DIR" "$HERMES_PY" -I - <<'PY'
 import sys
 sys.path.insert(0, "/opt/hermes")
@@ -215,10 +148,11 @@ PY
     fail "Copilot sign-in did not finish — run kyverno-start again to retry"
   fi
 fi
-if [ "$NEW_LOGIN" = 1 ]; then
+# First time only: pick the model. Later runs keep it, and /model switches inside the chat.
+if [ "$NEW_LOGIN" = 1 ] || { [ "$HAS_PROVIDER_KEY" = 1 ] && [ ! -f "$PROFILE_DIR/.kyverno-model-chosen" ]; }; then
   step "Model"
-  info "Choose GitHub Copilot and a model."
-  hermes -p "$PROFILE" model
+  info "Pick your provider and model."
+  hermes -p "$PROFILE" model && touch "$PROFILE_DIR/.kyverno-model-chosen"
 fi
 
 step "Starting"

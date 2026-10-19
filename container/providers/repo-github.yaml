@@ -34,8 +34,11 @@ endpoints:
     port: 443
     path: /mcp/
     protocol: rest
-    access: read-write
     enforcement: enforce
+    rules:
+      - allow: { method: GET, path: "/mcp/**" }
+      - allow: { method: POST, path: "/mcp/**" }
+      - allow: { method: DELETE, path: "/mcp/**" }
 binaries:
   # Hermes' interpreter. The directory name carries the Python version and build date, hence the glob.
   - /opt/hermes-home/.hermes/tools/python-*/bin/python*

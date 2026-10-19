@@ -98,3 +98,16 @@ network_policies:
           - allow: { method: POST, path: "/**" }
     binaries:
       - { path: "/opt/hermes-home/.hermes/tools/python-*/bin/python*" }
+
+  # The model catalog Hermes reads to build its /model list. Read-only, no credential.
+  model_catalog:
+    name: model_catalog
+    endpoints:
+      - host: models.dev
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/**" }
+    binaries:
+      - { path: "/opt/hermes-home/.hermes/tools/python-*/bin/python*" }

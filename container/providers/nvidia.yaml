@@ -1,0 +1,24 @@
+# Model provider key for the Kyverno assistant, held by OpenShell. The sandbox only sees a placeholder in
+# NVIDIA_API_KEY; the proxy swaps in the real key on requests to integrate.api.nvidia.com, and only from Hermes' Python.
+id: kyverno-nvidia
+display_name: NVIDIA (Kyverno assistant)
+description: NVIDIA API key for the Kyverno assistant's model, injected by the proxy only
+category: inference
+inference_capable: true
+credentials:
+  - name: api_key
+    description: NVIDIA API key
+    env_vars: [NVIDIA_API_KEY]
+    required: true
+    auth_style: bearer
+    header_name: authorization
+discovery:
+  credentials: [api_key]
+endpoints:
+  - host: integrate.api.nvidia.com
+    port: 443
+    protocol: rest
+    access: read-write
+    enforcement: enforce
+binaries:
+  - /opt/hermes-home/.hermes/tools/python-*/bin/python*
