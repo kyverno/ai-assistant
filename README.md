@@ -88,7 +88,7 @@ model sign-in. After that, `container/kyverno` alone gets you back in. Everythin
 |---|---|
 | **A Mac with Apple Silicon**, or Linux | Tested on Apple Silicon. Intel and other Linux machines need the published image (see [step 2](#2-get-the-image)); that image is built by CI but not tested yet. |
 | **[Docker Desktop](https://docs.docker.com/get-docker/) 4.60 or newer** | Must be running. Give Docker at least 4 GB of memory (Docker Desktop → Settings → Resources); an 8 GB Mac is enough. |
-| **About 20 GB of free disk** | The image is about 5.5 GB. |
+| **About 20 GB of free disk** | The image is about 4.2 GB. |
 | **A GitHub token** | [Step 1](#1-create-a-github-token). |
 | **A model** | A GitHub Copilot account (the free plan works with a few models), or an Anthropic, OpenAI or NVIDIA API key. See [step 4](#4-pick-a-model-that-works). |
 
@@ -125,7 +125,7 @@ Pick one:
 
 | Option | Command | Time | Notes |
 |---|---|---|---|
-| **Build it yourself** | `container/kyverno --build` | 15 to 30 minutes, once | Works today on any supported machine. Downloads about 6 GB while building. |
+| **Build it yourself** | `container/kyverno --build` | 15 to 30 minutes, once | Works today on any supported machine. Downloads about 5 GB while building. |
 | **Download the published image** | `container/kyverno` | A few minutes | The default once a release is published (see [why](#why-it-is-built-this-way)). It pulls `ghcr.io/kyverno/ai-assistant:latest`. Until the first release is published, use `--build`. |
 
 ### 3. Start it
@@ -246,7 +246,7 @@ and checked when the image is built, including a full memory cycle run with the 
 user's first run takes about a second of setup, and every machine runs identical bits.
 
 **Why publish the image to ghcr.io?** `ghcr.io` is GitHub's container registry. Building the image on your own
-laptop takes 15 to 30 minutes, downloads about 6 GB, and can break if a package was released since the last
+laptop takes 15 to 30 minutes, downloads about 5 GB, and can break if a package was released since the last
 person built it. Publishing it once from CI, from a tagged release, means a new maintainer just downloads it,
 and an upgrade is a new tag. The workflow is `.github/workflows/container-image.yml`; it builds for Apple Silicon
 and Intel and publishes one image. Until a release is published, use `--build`.
