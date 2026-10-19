@@ -7,6 +7,7 @@ launcher does the rest.
 ```bash
 container/kyverno --build     # first time: builds the image from this checkout, then starts it
 container/kyverno             # every later run: reattach (or start) the sandbox
+container/kyverno --build --upgrade   # after pulling a new version: rebuild and recreate, keeping your state
 ```
 
 Needs Docker Desktop 4.60 or newer on Apple Silicon macOS, or Docker on Linux (arm64 image only for now).
@@ -66,7 +67,22 @@ Verified means I ran it in a real sandbox on the current image.
 | Dashboard | Not available | Not packaged yet |
 | Scheduled jobs (cron, the Slack digest) | Not available | They run inside the Hermes gateway, which is not started |
 | `AGENTS.md` cache seeding | Not done | `kyverno-context` falls back to searching GitHub |
-| Keeping state when the image is upgraded | Not done | State survives stop and start, not deleting and recreating the sandbox |
+| Keeping state when the image is upgraded | Verified | `--upgrade`: see below |
+
+## Upgrading and your state
+
+State lives inside the sandbox and survives stopping and starting it. A new image means a new sandbox, so
+`container/kyverno --build --upgrade` (or `--image NEW`) saves your state, recreates the sandbox from the new
+image, and puts the state back. It carries only what is yours:
+
+- the memory database, the notes in `memories/`, and the chat history and sessions
+- your repo and username, and the Copilot sign-in (just those settings, not the whole `.env`)
+- the model you chose
+
+The profile itself (skills, plugins, hooks, settings) always comes from the new image. If saving fails, the old
+sandbox is left alone. If restoring fails, the saved copy stays in a temporary folder and its path is printed; it
+holds your Copilot token, so delete it when you are done. OpenShell only moves files in and out of `/sandbox`,
+so the bundle goes through there and is removed afterwards. Skills you created inside the sandbox are not carried.
 
 ## Safety layers
 

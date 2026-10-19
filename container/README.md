@@ -7,6 +7,7 @@ that runs inside an [OpenShell](https://github.com/NVIDIA/OpenShell) sandbox. Yo
 container/kyverno --build                  # first time: build the image from this checkout, then start
 container/kyverno                          # later: reattach to (or start) the sandbox
 container/kyverno --provider anthropic     # also use another model provider (anthropic, openai, nvidia)
+container/kyverno --build --upgrade        # new version: recreate the sandbox, keeping your state
 ```
 
 What runs where, how secrets are kept, what the agent can reach, what works today and what doesn't, and
@@ -20,11 +21,11 @@ troubleshooting are all in **[docs/container.md](../docs/container.md)**.
 | `setup-profile.sh` | One-time profile setup, run while the image is built |
 | `kyverno-start` | Runs inside the sandbox: your repo and username, the Copilot sign-in, then the chat |
 | `kyverno` | The launcher you run on your laptop |
+| `restore-state.sh` | Uploaded by the launcher during `--upgrade` to put your state back |
 | `policy.yaml` | The sandbox's filesystem and network policy |
 | `providers/*.yaml` | OpenShell provider profiles: the GitHub token and the model-provider keys |
 | `hooks/require-sandbox-terminal.sh` | Lets the terminal run locally, but only inside an OpenShell sandbox |
 
 ## Not done yet
 
-Slack, the dashboard, scheduled jobs, a published multi-architecture image (use `--build` for now), and keeping
-your state when the image is upgraded.
+Slack, the dashboard, scheduled jobs, and a published multi-architecture image (use `--build` for now).

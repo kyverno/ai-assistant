@@ -1,7 +1,7 @@
 #!/bin/bash
 # One command to run the Kyverno assistant inside an OpenShell sandbox.
 #
-#   container/kyverno [--image IMAGE | --build] [--name NAME] [--provider P ...] [--reset]
+#   container/kyverno [--image IMAGE | --build] [--name NAME] [--provider P ...] [--upgrade] [--reset]
 #
 # What it does, each time: checks Docker, installs OpenShell if it is missing, registers your GitHub
 # token with OpenShell (asked once, kept outside the sandbox), creates or starts the sandbox, applies
@@ -12,6 +12,9 @@
 #   --name NAME    sandbox name (default: kyverno-assistant)
 #   --provider P   also use model provider P (anthropic, openai or nvidia): its API key is asked once and
 #                  kept in OpenShell like the GitHub token. Without it, the assistant uses GitHub Copilot.
+#   --upgrade      recreate the sandbox from the (new) image and keep your state: memory, chat history,
+#                  repo and username, Copilot sign-in and model choice. Use it with --build or --image.
+#   --no-attach    set everything up but do not open the chat
 #   --reset        forget the stored GitHub token and ask for it again
 set -uo pipefail
 
@@ -23,6 +26,9 @@ SANDBOX="kyverno-assistant"
 PROVIDER="kyverno-repo-github"
 BUILD=0
 RESET=0
+UPGRADE=0
+NO_ATTACH=0
+BACKUP_DIR=""
 WANT_PROVIDERS=()
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -30,8 +36,10 @@ while [ $# -gt 0 ]; do
     --image) IMAGE="${2:-}"; shift 2 ;;
     --name) SANDBOX="${2:-}"; shift 2 ;;
     --provider) WANT_PROVIDERS+=("${2:-}"); shift 2 ;;
+    --upgrade) UPGRADE=1; shift ;;
+    --no-attach) NO_ATTACH=1; shift ;;
     --reset) RESET=1; shift ;;
-    -h|--help) sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "unknown option: $1 (see --help)" >&2; exit 2 ;;
   esac
 done
@@ -57,6 +65,28 @@ sync_profile() {
   local rc=$?
   rm -rf "$tmp"
   return $rc
+}
+
+# --- keeping your state across an image upgrade ---
+# What is yours: memory, chat history, your repo and username, the Copilot sign-in, the model you chose.
+# The profile itself (skills, hooks, plugins, settings) comes from the new image.
+# OpenShell only moves files in and out of the sandbox workspace, /sandbox, so the bundle goes there.
+sandbox_listed() { openshell sandbox list 2>/dev/null | grep -q "^$SANDBOX "; }
+
+save_state() {
+  local dest="$1"
+  openshell sandbox exec -n "$SANDBOX" --no-tty -- sh -c \
+    'cd /opt/hermes-home/.hermes/profiles/kyverno && tar -cf /sandbox/kyverno-state.tar $(ls -d .env config.yaml .kyverno-model-chosen mnemosyne/data memories sessions state.db state.db-wal state.db-shm 2>/dev/null)' \
+    >/dev/null 2>&1 || return 1
+  openshell sandbox download "$SANDBOX" /sandbox/kyverno-state.tar "$dest/" >/dev/null 2>&1 || return 1
+  [ -s "$dest/kyverno-state.tar" ]
+}
+
+restore_state() {
+  local src="$1"
+  openshell sandbox upload "$SANDBOX" "$src/kyverno-state.tar" /sandbox/ >/dev/null 2>&1 || return 1
+  openshell sandbox upload "$SANDBOX" "$HERE/restore-state.sh" /sandbox/ >/dev/null 2>&1 || return 1
+  openshell sandbox exec -n "$SANDBOX" --no-tty -- bash /sandbox/restore-state.sh
 }
 
 step "1. Docker and OpenShell"
@@ -162,6 +192,19 @@ for P in "${WANT_PROVIDERS[@]+"${WANT_PROVIDERS[@]}"}"; do
 done
 
 step "4. Sandbox"
+if [ "$UPGRADE" = 1 ] && sandbox_listed; then
+  if openshell sandbox list 2>/dev/null | grep "^$SANDBOX " | grep -q Stopped; then
+    openshell sandbox start "$SANDBOX" >/dev/null 2>&1
+    for _ in $(seq 1 60); do openshell sandbox list 2>/dev/null | awk -v n="$SANDBOX" '$1==n && $NF=="Ready"{f=1} END{exit !f}' && break; sleep 2; done
+  fi
+  BACKUP_DIR="$(mktemp -d)"; chmod 700 "$BACKUP_DIR"
+  info "saving your state from '$SANDBOX' before recreating it..."
+  save_state "$BACKUP_DIR" || { fail "could not save the state, so the sandbox was left alone"; rm -rf "$BACKUP_DIR"; exit 1; }
+  pass "state saved"
+  openshell sandbox delete "$SANDBOX" >/dev/null 2>&1
+  for _ in $(seq 1 60); do sandbox_listed || break; sleep 2; done
+  sandbox_listed && { fail "the old sandbox did not go away; your state is saved in $BACKUP_DIR"; exit 1; }
+fi
 if openshell sandbox list 2>/dev/null | grep -q "^$SANDBOX "; then
   if openshell sandbox list 2>/dev/null | grep "^$SANDBOX " | grep -q Stopped; then
     openshell sandbox start "$SANDBOX" >/dev/null 2>&1 && info "started '$SANDBOX'"
@@ -195,9 +238,19 @@ for P in "${WANT_PROVIDERS[@]+"${WANT_PROVIDERS[@]}"}"; do
   openshell sandbox provider attach "$SANDBOX" "kyverno-$P" >/dev/null 2>&1
 done
 pass "sandbox '$SANDBOX' is ready"
+if [ -n "$BACKUP_DIR" ]; then
+  info "restoring your state..."
+  if restore_state "$BACKUP_DIR"; then
+    rm -rf "$BACKUP_DIR"; pass "state restored"
+  else
+    fail "could not restore the state; the saved copy is still in $BACKUP_DIR (it holds your Copilot token: delete it when done)"
+    exit 1
+  fi
+fi
 
 step "5. Assistant"
 ARGS=()
 [ -n "$REPO" ] && ARGS+=(--repo "$REPO")
 [ -n "$LOGIN" ] && ARGS+=(--login "$LOGIN")
+[ "$NO_ATTACH" = 1 ] && { pass "ready (not opening the chat: --no-attach)"; exit 0; }
 exec openshell sandbox exec -n "$SANDBOX" --tty -- kyverno-start "${ARGS[@]+"${ARGS[@]}"}"
