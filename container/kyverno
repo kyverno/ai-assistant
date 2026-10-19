@@ -94,6 +94,15 @@ if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
   fail "Docker is not installed or not running — start Docker Desktop (4.60 or newer) and re-run"
   exit 1
 fi
+# The sandbox needs Landlock, which Docker Desktop only has from 4.60.
+DOCKER_PLATFORM=$(docker version --format '{{.Server.Platform.Name}}' 2>/dev/null)
+DESKTOP_RE='Docker Desktop ([0-9]+)\.([0-9]+)'
+if [[ "$DOCKER_PLATFORM" =~ $DESKTOP_RE ]]; then
+  if [ "${BASH_REMATCH[1]}" -lt 4 ] || { [ "${BASH_REMATCH[1]}" -eq 4 ] && [ "${BASH_REMATCH[2]}" -lt 60 ]; }; then
+    fail "Docker Desktop ${BASH_REMATCH[1]}.${BASH_REMATCH[2]} is older than 4.60 and has no Landlock — update it and re-run"
+    exit 1
+  fi
+fi
 pass "docker is running"
 
 if ! command -v openshell >/dev/null 2>&1; then
@@ -121,9 +130,17 @@ if [ "$BUILD" = 1 ]; then
   IMAGE="kyverno-assistant:dev"
   info "building $IMAGE from this checkout (the first build takes several minutes)..."
   docker build -f "$REPO_ROOT/container/Dockerfile" -t "$IMAGE" "$REPO_ROOT" || { fail "image build failed"; exit 1; }
-elif ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
+elif [ "$UPGRADE" = 1 ] || ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
   info "pulling $IMAGE..."
-  docker pull "$IMAGE" || { fail "could not pull $IMAGE — use --build, or --image with an image you have"; exit 1; }
+  if ! docker pull "$IMAGE"; then
+    # An image that only exists on this machine (built with --build) cannot be pulled; that is fine.
+    if docker image inspect "$IMAGE" >/dev/null 2>&1; then
+      info "could not pull it; using the copy already on this machine"
+    else
+      fail "could not pull $IMAGE — use --build, or --image with an image you have"
+      exit 1
+    fi
+  fi
 fi
 pass "image $IMAGE"
 
