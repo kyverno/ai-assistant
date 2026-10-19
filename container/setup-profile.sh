@@ -37,13 +37,18 @@ PY
 )
 hq skills opt-out
 
-step "hooks: pin the commands to the profile directory (Hermes runs them relative to its start directory)"
-python3 - "$PROFILE_DIR" <<'PY'
+step "hooks: run them from the read-only copy in /opt/kyverno"
+# Hermes runs hook commands relative to where it was started, so the config needs absolute paths. Point them at
+# the baked copies under /opt/kyverno: root-owned, and read-only to the agent under the sandbox policy. The
+# copies the profile install put in the profile folder are writable by the agent, so they would be a weaker home
+# for the checks that stop it merging.
+python3 - "$PROFILE_DIR" "$SRC/hooks" <<'PY'
 import sys
-d = sys.argv[1]
-p = d + "/config.yaml"
+profile_dir, hooks_dir = sys.argv[1], sys.argv[2]
+p = profile_dir + "/config.yaml"
 s = open(p).read()
-open(p, "w").write(s.replace('command: "./hooks/', 'command: "' + d + '/hooks/'))
+s = s.replace('command: "./hooks/', 'command: "' + hooks_dir + '/')
+open(p, "w").write(s)
 PY
 
 step "tools: terminal and file run locally inside the sandbox; Slack is left out for now"

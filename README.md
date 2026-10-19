@@ -73,7 +73,7 @@ stores your token, creates or starts the sandbox, and opens the chat.
 ```bash
 git clone https://github.com/kyverno/ai-assistant.git
 cd ai-assistant
-container/kyverno --build      # first time: builds the image (15 to 20 minutes), then starts it
+container/kyverno --build      # first time: builds the image (15 to 30 minutes), then starts it
 ```
 
 It asks for your GitHub token once (hidden), then shows a GitHub page and a code to approve for the
@@ -88,7 +88,7 @@ model sign-in. After that, `container/kyverno` alone gets you back in. Everythin
 |---|---|
 | **A Mac with Apple Silicon**, or Linux | Tested on Apple Silicon. Intel and other Linux machines need the published image (see [step 2](#2-get-the-image)); that image is built by CI but not tested yet. |
 | **[Docker Desktop](https://docs.docker.com/get-docker/) 4.60 or newer** | Must be running. Give Docker at least 4 GB of memory (Docker Desktop → Settings → Resources); an 8 GB Mac is enough. |
-| **About 20 GB of free disk** | The image is 4.7 GB. |
+| **About 20 GB of free disk** | The image is about 5.5 GB. |
 | **A GitHub token** | [Step 1](#1-create-a-github-token). |
 | **A model** | A GitHub Copilot account (the free plan works with a few models), or an Anthropic, OpenAI or NVIDIA API key. See [step 4](#4-pick-a-model-that-works). |
 
@@ -125,7 +125,7 @@ Pick one:
 
 | Option | Command | Time | Notes |
 |---|---|---|---|
-| **Build it yourself** | `container/kyverno --build` | 15 to 20 minutes, once | Works today on any supported machine. Downloads about 5 GB while building. |
+| **Build it yourself** | `container/kyverno --build` | 15 to 30 minutes, once | Works today on any supported machine. Downloads about 6 GB while building. |
 | **Download the published image** | `container/kyverno` | A few minutes | The default once a release is published (see [why](#why-it-is-built-this-way)). It pulls `ghcr.io/kyverno/ai-assistant:latest`. Until the first release is published, use `--build`. |
 
 ### 3. Start it
@@ -229,7 +229,8 @@ The agent cannot merge, and no single mechanism is trusted on its own. Five inde
 
 Your token never enters the sandbox, so a prompt-injected agent cannot leak it. One trade-off compared with the
 older host install: Hermes and its configuration now live in the same sandbox as the agent, so the agent could
-edit its own config and hooks. Layers 1, 2 and 5 do not depend on those files. The details, including exactly
+edit its own `config.yaml` (the hook scripts themselves are read-only to it). Layers 1, 2 and 5 do not depend on
+that file. The details, including exactly
 what was tested, are in [`docs/container.md`](docs/container.md).
 
 ## Why it is built this way
@@ -245,7 +246,7 @@ and checked when the image is built, including a full memory cycle run with the 
 user's first run takes about a second of setup, and every machine runs identical bits.
 
 **Why publish the image to ghcr.io?** `ghcr.io` is GitHub's container registry. Building the image on your own
-laptop takes 15 to 20 minutes, downloads about 5 GB, and can break if a package was released since the last
+laptop takes 15 to 30 minutes, downloads about 6 GB, and can break if a package was released since the last
 person built it. Publishing it once from CI, from a tagged release, means a new maintainer just downloads it,
 and an upgrade is a new tag. The workflow is `.github/workflows/container-image.yml`; it builds for Apple Silicon
 and Intel and publishes one image. Until a release is published, use `--build`.
@@ -377,7 +378,7 @@ docs/                    design, deployment and usage docs
 
 | Doc | Contents |
 |---|---|
-| [`docs/container.md`](docs/container.md) | The sandbox in depth: what runs where, secrets, the network policy, what was verified, upgrades, publishing a release |
+| [`docs/container.md`](docs/container.md) | The sandbox in depth: what runs where, secrets, the network policy, what was verified, upgrades, a security review, how to update dependencies, publishing a release |
 | [`docs/host-install.md`](docs/host-install.md) | Running without the sandbox: install, Slack setup, the review digest |
 | [`docs/capabilities.md`](docs/capabilities.md) | A tour of what it can do, with example prompts |
 | [`docs/deployment.md`](docs/deployment.md) | Install runbook and every environment variable (host install) |

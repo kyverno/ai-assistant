@@ -5,7 +5,7 @@
 #
 # Run it by pushing a release tag (v*), or by hand from the Actions tab (publishes the "edge" tag).
 # Each architecture is built on a native runner, not emulated: the build downloads and compiles things
-# for the machine it runs on, and takes about 15 to 20 minutes.
+# for the machine it runs on, and takes about 15 to 30 minutes.
 #
 # One-time setup by an org admin: allow this repository to publish packages, and after the first
 # publish set the package's visibility to public so that `container/kyverno` can pull it without logging in.

@@ -11,7 +11,7 @@ container/kyverno --build --upgrade   # after pulling a new version: rebuild and
 ```
 
 Needs Docker Desktop 4.60 or newer on Apple Silicon macOS, or Docker on Linux (arm64 image only for now).
-The first image build takes 15 to 20 minutes on a laptop with 8 GB of RAM; after that, starting is quick.
+The first image build takes 15 to 30 minutes on a laptop with 8 GB of RAM; after that, starting is quick.
 
 ## What runs where
 
@@ -95,7 +95,9 @@ The agent cannot merge, and no single mechanism is trusted on its own:
 5. The network policy denies everything not listed above.
 
 Trade-off compared with the older host install: Hermes and its config now live in the same sandbox as the
-agent, so the agent can edit its own `config.yaml` and hooks. Layers 1, 2 and 5 do not depend on those files.
+agent, so the agent can edit its own `config.yaml` (for example to remove a hook entry or widen the tool list).
+The hook *scripts* run from `/opt/kyverno/profiles/maintainer/hooks`, which is root-owned and read-only under the
+sandbox policy, so the agent cannot rewrite them. Layers 1, 2 and 5 do not depend on `config.yaml` at all.
 
 ## Choosing a model
 
@@ -145,6 +147,80 @@ The launcher pulls `ghcr.io/kyverno/ai-assistant:latest` by default. A fork or a
 **Not tested yet:** the workflow has not been run, and the Intel (amd64) image has not been built or run. The
 Dockerfile is architecture-neutral by design (the Hermes installer picks the right tools for the machine), but the
 first amd64 build is the real test.
+
+## Security review
+
+Checked on 19 Oct 2026 against the image built from this branch. Nothing here is a substitute for a review by a
+person who owns the risk; it is what was actually run and found.
+
+| Check | Result |
+|---|---|
+| shellcheck on every script | Clean |
+| hadolint on the Dockerfile | Only "pin apt package versions", which is deliberate: the base image is pinned by digest and Ubuntu's archive drops old package versions, so exact pins would break builds without making them safer |
+| Secret scan of everything the PR adds | None found |
+| Image contents | No `.env` or key material beyond the system CA certificates. The profile's `.env` holds only `TERMINAL_ENV` and `HF_HUB_OFFLINE`. Runs as uid 1000. `/opt/hermes` is not writable by the agent. The 8 setuid files come from the base OS image |
+| Vulnerability scan (Trivy, HIGH and CRITICAL with a fix available) | **64 findings, none in OS packages.** 43 are Python libraries and 21 are Node.js packages. One distinct CRITICAL: PyJWT 2.13.0, an authentication bypass in public-key validation (fixed in 2.14.0). Others include urllib3, httpx, msgpack, setuptools, undici and tar |
+
+**What the findings mean.** Every one is in Hermes' own dependency set at the commit we pin, so the fix is to bump
+the Hermes pin (see below), not to patch libraries by hand. The agent starts every connection itself and runs no
+server, and all of its traffic goes through the proxy, which limits the exposure; but I have not assessed whether
+each CVE is reachable, and a scan finding is not an exploit. One entry (`hermes-agent 0.0.0`) is probably a false
+positive caused by the package's version metadata; that is unverified.
+
+**Fixed in this PR:** the base image is pinned by digest; Hermes' installer script is pinned by SHA-256, so a
+changed script fails the build instead of running unreviewed; the launcher fetches OpenShell's installer from the
+pinned tag, not `main`; failed downloads inside piped build steps fail the build; the repo and username you type
+are validated before they are used in a URL or written to a settings file; and the safety hooks run from a
+read-only location.
+
+**Known limits, not fixed:**
+
+- The agent can edit its own `config.yaml` inside the sandbox (above).
+- Packages the memory plugin brings in (`fastembed`, `onnxruntime`, ...), the `anthropic` library, and `apt`
+  packages are resolved when the image is built, not locked with hashes. Only `mnemosyne-hermes` and
+  `mnemosyne-memory` are pinned by hand. Freezing that set with hashes is the next step for reproducibility.
+- The published image is not signed and has no SBOM or provenance attestation.
+- The launcher installs OpenShell with its own installer (`curl | sh`, from a pinned tag, but not checksum-verified).
+- Vulnerability scanning is manual for now: there is no scan in CI. Run Trivy against a new image (see below).
+- OpenShell is 0.x and the launcher reads its command output; it was tested with 0.1.3 and prints a note on any
+  other version.
+- There is no automated end-to-end test of the launcher and sandbox. The image build proves the memory plugin
+  loads and works offline, and CI lints the scripts, but a full chat is only tested by hand.
+
+## Updating dependencies
+
+Things are pinned so builds are reproducible, which means updates are deliberate. What moves what:
+
+| Dependency | Pinned in | How it is updated |
+|---|---|---|
+| Base image | `FROM ...@sha256:` in `container/Dockerfile` | Dependabot proposes a new digest weekly. Build, then scan it (below) |
+| Hermes' installer script | `HERMES_INSTALLER_SHA256` in the Dockerfile | By hand. If the build stops on the checksum, the script changed: read the diff (`curl -fsSL https://hermes-agent.nousresearch.com/install.sh`), then update the hash |
+| GitHub Actions | Commit hashes in `.github/workflows/` | Dependabot, weekly |
+| Hermes | `HERMES_COMMIT` in the Dockerfile | By hand. See below |
+| `mnemosyne-hermes` / `mnemosyne-memory` | The `uv pip install` pin in the Dockerfile | By hand, when Hermes moves |
+| OpenShell | `OPENSHELL_VERSION` in `container/kyverno` | By hand. See below |
+| shellcheck, hadolint | Digests in `.github/workflows/container-lint.yml` | By hand, occasionally |
+
+**Bumping Hermes** (do this about monthly, and whenever a scan shows a CRITICAL):
+
+1. Change `HERMES_COMMIT` in the Dockerfile and build. The build fails if the memory plugin does not load or
+   needs the network.
+2. Check whether the `mnemosyne-*` pin is still right: remove it, build, and see if the memory provider still
+   loads. It was needed because `mnemosyne-hermes` 0.7.4 refuses to start with the Hermes we pin.
+3. Start a sandbox from the new image and check: the hooks are listed as allowed (`hermes -p kyverno hooks list`),
+   the GitHub MCP connects (`hermes -p kyverno mcp test github`), and a short chat answers.
+4. Scan the new image and compare with the numbers above:
+   ```bash
+   docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:latest image \
+     --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed kyverno-assistant:dev
+   ```
+
+**Bumping OpenShell:** change `OPENSHELL_VERSION`, then run the launcher through: first start, `--upgrade`,
+`--provider`, and a policy re-apply. The launcher parses `openshell sandbox list` and `openshell provider list`,
+and the provider profile format and policy schema are OpenShell's, so those are what can break.
+
+**Not rebuilt, but can change under you:** GitHub's and Copilot's APIs, which Copilot models your plan allows, and
+Docker Desktop. The first two only need the chat to be tried; the launcher checks Docker Desktop is 4.60 or newer.
 
 ## How the image is built, and why
 
