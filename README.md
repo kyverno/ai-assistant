@@ -11,9 +11,8 @@ only reach the few hosts it needs. You start it with one command and talk to it 
 server to run and no webhook receiver.
 
 > **Status:** works today, on Apple Silicon Macs. Not yet validated across multiple maintainers' real
-> workflows (see the validation plan in [`docs/deployment.md`](docs/deployment.md)). Slack, the dashboard and
-> scheduled jobs are not available in the sandbox yet; they work in the
-> [host install](docs/host-install.md).
+> workflows (see the validation plan in [`docs/deployment.md`](docs/deployment.md)). Slack and scheduled jobs are
+> not available in the sandbox yet; they work in the [host install](docs/host-install.md).
 
 ## Contents
 
@@ -27,7 +26,8 @@ server to run and no webhook receiver.
 - [Troubleshooting](#troubleshooting)
 - [Removing everything](#removing-everything)
 - [What it does](#what-it-does)
-- [The dashboard, Slack and scheduled jobs](#the-dashboard-slack-and-scheduled-jobs)
+- [The dashboard](#the-dashboard)
+- [Slack and scheduled jobs](#slack-and-scheduled-jobs)
 - [Repository layout](#repository-layout)
 - [Further reading](#further-reading)
 
@@ -187,6 +187,7 @@ Type `/help` for the chat commands.
 |---|---|
 | Start, or come back later | `container/kyverno` |
 | Open a second chat at the same time | `container/kyverno` in another terminal |
+| Open the dashboard | http://127.0.0.1:9219/kyverno?profile=kyverno (the launcher prints it; see [the dashboard](#the-dashboard)) |
 | Leave | Close the chat. The sandbox keeps running, idle |
 | Stop the sandbox | `openshell sandbox stop kyverno-assistant` (`container/kyverno` starts it again) |
 | See whether it is running | `openshell sandbox list` |
@@ -254,8 +255,8 @@ and Intel and publishes one image. Until a release is published, use `--build`.
 **Why does the first build take so long?** It downloads Hermes and its tools, the memory plugin, and a 64 MB
 search model, then runs the proofs above. Later builds reuse Docker's cache and take seconds.
 
-**Why no Slack, dashboard or scheduled jobs yet?** Slack's tool runs under Docker, which a sandbox does not
-have, and the dashboard and scheduled jobs are not packaged. They work in the
+**Why no Slack or scheduled jobs yet?** Slack's tool runs under Docker, which a sandbox does not have, and the
+scheduled jobs run inside Hermes' gateway, which is not started. They work in the
 [host install](docs/host-install.md).
 
 ## Troubleshooting
@@ -298,14 +299,35 @@ docker rmi kyverno-assistant:dev                    # the image, if you built it
 **It cannot merge.** There is no merge tool in its toolset, and this is enforced in
 [independent layers](#how-it-stays-safe). See [`docs/architecture.md`](docs/architecture.md).
 
-## The dashboard, Slack and scheduled jobs
+## The dashboard
 
-These are part of the assistant but are **not available in the sandbox yet**. They work in the
-[host install](docs/host-install.md):
+A browser board that shows what the agent just told you, linked, grouped and sortable, so you don't scroll the
+chat or copy links by hand. It runs inside the sandbox, and the launcher forwards a port on your laptop to it and
+prints the address:
 
-- **The dashboard** is a browser board that shows what the agent just told you, linked, grouped and sortable
-  (`hermes -p kyverno dashboard`, then the Kyverno tab). Overview, PR / Issue / Discussion lists, a detail panel
-  and an activity log. It is read-only; confirming and acting stay in the chat.
+```
+http://127.0.0.1:9219/kyverno?profile=kyverno
+```
+
+Pick **Kyverno** in the sidebar under Plugins. It refreshes every 15 seconds. Keep it open next to the chat: it fills
+when the agent answers a queue, stale-PR, issue-triage or Discussions request, not in the background.
+
+| Tab | Shows |
+|---|---|
+| **Overview** | What is waiting on you, grouped by verdict (rescue, decide, review, close, triage…), the milestone and due date, gate status, recent actions. |
+| **PRs / Issues / Discussions** | One row per item with a GitHub link, state (CI, merge state, size, labels) and the agent's verdict and reason. Switch views, filter by verdict, search, sort. |
+| **Detail panel** | Summary, unresolved threads, a graph of related PRs and issues, and any drafted comment awaiting your confirmation, with a copy button. |
+| **Activity** | Every action you confirmed (approvals, comments, nudges, closes, deferrals) with a timestamp and a link. |
+
+The dashboard is read-only. Confirming and acting still happen in the chat. It is reachable only from your own
+laptop (the port is forwarded to `127.0.0.1`), and port 9219 is used so it does not clash with a Hermes dashboard
+on 9119. Set `KYVERNO_DASHBOARD_PORT` to change it. Its Settings pages can show what is in the sandbox's settings
+file, which includes the Copilot sign-in token. Your GitHub token is not there.
+
+## Slack and scheduled jobs
+
+These are not available in the sandbox yet. They work in the [host install](docs/host-install.md):
+
 - **Slack**: talk to the assistant by mentioning it, and it can read and post in your maintainers channel.
 - **Scheduled jobs**: a weekday review digest and two memory jobs (installed paused).
 

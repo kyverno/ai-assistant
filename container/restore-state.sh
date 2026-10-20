@@ -13,7 +13,7 @@ rm -rf "$TMP" && mkdir -p "$TMP"
 tar -xf /sandbox/kyverno-state.tar -C "$TMP" || { echo "could not read the saved state" >&2; exit 1; }
 
 # 1. data directories and files, replaced wholesale (the new image starts with empty ones)
-for d in mnemosyne/data memories sessions; do
+for d in mnemosyne/data memories sessions kyverno-dashboard; do
   if [ -e "$TMP/$d" ]; then
     mkdir -p "$P/$(dirname "$d")"
     rm -rf "${P:?}/$d"

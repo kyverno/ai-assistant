@@ -20,6 +20,7 @@ troubleshooting are all in **[docs/container.md](../docs/container.md)**.
 | `Dockerfile` | The image: Hermes pinned by commit, the profile baked in, plus build-time proofs that it works |
 | `setup-profile.sh` | One-time profile setup, run while the image is built |
 | `kyverno-start` | Runs inside the sandbox: your repo and username, the Copilot sign-in, then the chat |
+| `kyverno-main` | The sandbox's main process: runs the dashboard in the background and keeps the sandbox alive |
 | `kyverno` | The launcher you run on your laptop |
 | `restore-state.sh` | Uploaded by the launcher during `--upgrade` to put your state back |
 | `policy.yaml` | The sandbox's filesystem and network policy |
@@ -28,4 +29,4 @@ troubleshooting are all in **[docs/container.md](../docs/container.md)**.
 
 ## Not done yet
 
-Slack, the dashboard, scheduled jobs, and a published multi-architecture image (use `--build` for now).
+Slack, scheduled jobs, and a published multi-architecture image (use `--build` for now).

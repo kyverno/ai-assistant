@@ -1,0 +1,22 @@
+#!/bin/bash
+# The sandbox's main process. It runs the dashboard in the background, restarting it if it stops, and keeps the
+# sandbox alive; everything else (the chat) is started on demand with `openshell sandbox exec`.
+# The dashboard listens on 127.0.0.1 inside the sandbox only; the launcher forwards a port on your laptop to it.
+set -u
+
+export HERMES_HOME=/opt/hermes-home/.hermes
+export PATH="/opt/hermes-home/.local/bin:$PATH"
+# The profile's config says ${GITHUB_TOKEN}; this is a placeholder here, never the real token.
+export GITHUB_TOKEN="${REPO_GITHUB_TOKEN:-}"
+PORT="${KYVERNO_DASHBOARD_PORT:-9219}"
+
+# --isolated makes the server profile-scoped, which is what makes it find this profile's Kyverno tab.
+# --skip-build serves the web UI that is already built into the image.
+(
+  while true; do
+    hermes -p kyverno dashboard --isolated --no-open --skip-build --port "$PORT" || true
+    sleep 5
+  done
+) >> /tmp/dashboard.log 2>&1 &
+
+exec sleep infinity

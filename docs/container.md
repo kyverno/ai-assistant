@@ -17,9 +17,9 @@ The first image build takes 15 to 30 minutes on a laptop with 8 GB of RAM; after
 
 | Where | What runs there |
 |---|---|
-| **Your laptop** | Docker, the OpenShell CLI and gateway, and the launcher (`container/kyverno`). Nothing else. |
+| **Your laptop** | Docker, the OpenShell CLI and gateway, and the launcher (`container/kyverno`), plus one forwarded port (`127.0.0.1:9219`) to the dashboard. Nothing else. |
 | **OpenShell gateway** (on the laptop) | Holds your GitHub token and any model API keys, enforces the network policy through a proxy, and keeps the audit log. |
-| **The sandbox** | Hermes, the profile (skills, plugins, hooks), the memory plugin and its database, the agent's terminal, and the Copilot sign-in token. |
+| **The sandbox** | Hermes, the profile (skills, plugins, hooks), the memory plugin and its database, the dashboard, the agent's terminal, and the Copilot sign-in token. |
 
 The image is built once. Hermes is pinned to a commit and every package it needs is installed at build time,
 because the sandbox has no open internet and the chat screen hides first-use prompts.
@@ -64,7 +64,7 @@ Verified means I ran it in a real sandbox on the current image.
 | Anthropic / NVIDIA / OpenAI keys | Partly | The request reaches the provider with the key swapped in. A real reply is untested |
 | Agent terminal and file tools | Enabled, not exercised | They run locally in the sandbox; the hook allows them only inside OpenShell |
 | Slack | Not available | The Slack MCP server runs under Docker, which a sandbox does not have |
-| Dashboard | Not available | Not packaged yet |
+| Dashboard | Verified | Runs in the sandbox; the launcher forwards `127.0.0.1:9219`. A sample item written through the agent's own `update_dashboard` function was served by it, with the Kyverno tab's script and styles loading |
 | Scheduled jobs (cron, the Slack digest) | Not available | They run inside the Hermes gateway, which is not started |
 | `AGENTS.md` cache seeding | Not done | `kyverno-context` falls back to searching GitHub |
 | Keeping state when the image is upgraded | Verified | `--upgrade`: see below |
@@ -75,7 +75,7 @@ State lives inside the sandbox and survives stopping and starting it. A new imag
 `container/kyverno --build --upgrade` (or `--image NEW`) saves your state, recreates the sandbox from the new
 image, and puts the state back. It carries only what is yours:
 
-- the memory database, the notes in `memories/`, and the chat history and sessions
+- the memory database, the notes in `memories/`, the chat history and sessions, and the dashboard's data
 - your repo and username, and the Copilot sign-in (just those settings, not the whole `.env`)
 - the model you chose
 
