@@ -10,7 +10,8 @@ container/kyverno             # every later run: reattach (or start) the sandbox
 container/kyverno --build --upgrade   # after pulling a new version: rebuild and recreate, keeping your state
 ```
 
-Needs Docker Desktop 4.60 or newer on Apple Silicon macOS, or Docker on Linux (arm64 image only for now).
+Needs Docker Desktop 4.60 or newer on Apple Silicon macOS, or Docker on Linux (x86_64 or arm64; what has been tried on
+each is in the table under "What works").
 The first image build takes 15 to 30 minutes on a laptop with 8 GB of RAM; after that, starting is quick.
 
 ## What runs where
@@ -41,8 +42,8 @@ Everything not listed is denied (`policy.yaml` and `providers/*.yaml`).
 | Destination | Allowed |
 |---|---|
 | `api.github.com` REST and GraphQL | Reads only. Merges, repo deletion and GraphQL mutations are refused by the proxy. |
-| `api.githubcopilot.com/mcp/` (GitHub MCP) | `GET`, `POST`, `DELETE`, with the repo token swapped in |
-| Copilot inference (`api.githubcopilot.com`, `api.individual.githubcopilot.com`, ...) | Yes, with Hermes' own Copilot token |
+| `api.githubcopilot.com/mcp/` (GitHub MCP) | Only the tools on the allowlist (the same list as `X-MCP-Tools` in `config.yaml`), with the repo token swapped in. Anything else, and anything named like merge, delete or force-push, is refused by the proxy |
+| Copilot inference (`api.githubcopilot.com`: `/models`, `/chat/completions`, `/responses`, `/embeddings`, `/v1/**`; and `api.individual`, `api.business`, `api.enterprise.githubcopilot.com`) | Yes, with Hermes' own Copilot token. `/mcp/` is deliberately not among the paths on the shared host (see "Safety layers") |
 | `github.com` login endpoints | Only the two device-code paths |
 | `github.com`, `codeload`, `raw.githubusercontent.com` | Read-only, for the agent's terminal, no credential |
 | `models.dev` | Read-only, for the `/model` list |
@@ -50,12 +51,13 @@ Everything not listed is denied (`policy.yaml` and `providers/*.yaml`).
 
 ## What works
 
-Verified means I ran it in a real sandbox on the current image.
+Verified means it was run in a real sandbox, on the image as built from this checkout.
 
 | Area | Status | Notes |
 |---|---|---|
 | Image build, sandbox start, first run | Verified | First run takes about a second; agent start to reply about 30 seconds |
 | GitHub MCP with the real token | Verified | Connects, 63 tools. Merge tools are not in the list |
+| GitHub MCP tool allowlist enforced by the proxy | Verified | With a real token: `get_me` is answered; `merge_pull_request` is refused by the name deny rule and `create_pull_request` by the allowlist, both with `policy_denied` before reaching GitHub; a batch with a merge hidden among allowed calls is refused too. `hermes mcp test github` connects through the rules. Closing an MCP session with `DELETE` is rejected by the proxy (it carries no JSON body), which only means the server closes the session itself later |
 | REST and GraphQL reads with the real token | Verified | Merge, delete and GraphQL mutations refused by the proxy |
 | Safety hooks (merge blocker, mnemosyne triples, terminal guard) | Verified | Approved at build time, listed as allowed |
 | Memory plugin (mnemosyne) | Verified | Starts, searches, consolidates, with the network off. Embedding model is in the image |
@@ -64,7 +66,7 @@ Verified means I ran it in a real sandbox on the current image.
 | Anthropic / NVIDIA / OpenAI keys | Partly | The request reaches the provider with the key swapped in. A real reply is untested |
 | Agent terminal and file tools | Enabled, not exercised | They run locally in the sandbox; the hook allows them only inside OpenShell |
 | Slack | Not available | The Slack MCP server runs under Docker, which a sandbox does not have |
-| Linux (amd64) | Verified in CI | On a GitHub runner (Ubuntu 24.04, kernel 6.17, Docker Engine 28): the whole stack ran, with the placeholder token, the proxy refusing a merge, read-only hooks and the dashboard answering. Not a real laptop; arm64 Linux is untried |
+| Linux (amd64) | Verified on a runner | On a GitHub runner (Ubuntu 24.04, kernel 6.17, Docker Engine 28): an amd64 image was built there and the whole stack ran, with the placeholder token, the proxy refusing a merge, read-only hooks and the dashboard answering. Not a real laptop, and not by the publish workflow; arm64 Linux is untried |
 | Dashboard | Verified | Runs in the sandbox; the launcher forwards `127.0.0.1:9219`. A sample item written through the agent's own `update_dashboard` function was served by it, with the Kyverno tab's script and styles loading |
 | Scheduled jobs (cron, the Slack digest) | Not available | They run inside the Hermes gateway, which is not started |
 | `AGENTS.md` cache seeding | Not done | `kyverno-context` falls back to searching GitHub |
@@ -90,15 +92,31 @@ so the bundle goes through there and is removed afterwards. Skills you created i
 The agent cannot merge, and no single mechanism is trusted on its own:
 
 1. The GitHub token has no merge permission (Pull requests: write without Contents: write).
-2. The proxy refuses REST merges, repo deletion and GraphQL mutations.
+2. The proxy, outside the sandbox, checks every GitHub call. REST and GraphQL on `api.github.com` are reads only:
+   merges, repo deletion and GraphQL mutations are refused. On the GitHub MCP server, each `tools/call` must name a
+   tool on the allowlist in `providers/repo-github.yaml` and must not match `*merge*`, `*delete*` or `*force_push*`;
+   one refused call refuses a whole batched request.
 3. The GitHub MCP tool allowlist (`X-MCP-Tools` and `tools.include` in `config.yaml`) has no merge tool.
 4. A pre-tool hook blocks tools whose names look like merge, delete or force-push.
 5. The network policy denies everything not listed above.
 
-Trade-off compared with the older host install: Hermes and its config now live in the same sandbox as the
-agent, so the agent can edit its own `config.yaml` (for example to remove a hook entry or widen the tool list).
-The hook *scripts* run from `/opt/kyverno/profiles/maintainer/hooks`, which is root-owned and read-only under the
-sandbox policy, so the agent cannot rewrite them. Layers 1, 2 and 5 do not depend on `config.yaml` at all.
+Layers 1, 2 and 5 are not files the agent can reach: the token lives in OpenShell, and the policy and provider
+profile are applied by the launcher through the gateway. Layers 3 and 4 live in `config.yaml` and the hooks. The
+hook *scripts* run from `/opt/kyverno/profiles/maintainer/hooks`, which is root-owned and read-only under the sandbox
+policy. `config.yaml` is writable by the sandbox user, and the agent has a terminal and file tools, so a manipulated
+agent could change it, for example to remove a hook entry or widen the tool list. Layers 1, 2 and 5 are what hold then:
+the proxy's tool allowlist, the token's scopes and the network rules live outside the sandbox.
+
+**Why the Copilot paths in `policy.yaml` are listed by name.** `api.githubcopilot.com` serves both Copilot inference
+and the GitHub MCP server (`/mcp/`). OpenShell admits a request if any rule for the host admits it, and a deny rule on
+one endpoint applies to the whole host. So an "allow every path" rule for inference would also admit every MCP tool
+call, merges included, and make layer 2's tool check meaningless. The inference rules therefore name the paths Hermes
+uses. If Copilot ever needs another path, add it there; never `/**`. This was found by testing a sandbox with the
+earlier all-paths rule: `merge_pull_request` reached GitHub. After the change it is refused.
+
+**Keeping the two tool lists equal.** The allowlist exists twice, in `config.yaml` and in
+`providers/repo-github.yaml`. The image build compares them and fails if they differ, so a tool added to one cannot
+silently be missing from the other.
 
 ## Choosing a model
 
@@ -145,17 +163,20 @@ One-time setup for an org admin:
 The launcher pulls `ghcr.io/kyverno/ai-assistant:latest` by default. A fork or a different registry can set
 `KYVERNO_IMAGE` or pass `--image`.
 
-**Not tested yet:** the workflow has not been run, and the Intel (amd64) image has not been built or run. The
-Dockerfile is architecture-neutral by design (the Hermes installer picks the right tools for the machine), but the
-first amd64 build is the real test.
+Before the manifest is created, the workflow scans both architectures with Trivy and stops if either has a fixable
+CRITICAL vulnerability, so a bad image never gets the release tag or `latest`.
+
+**Not tested yet:** the workflow itself has not been run, so neither the native arm64/amd64 builds nor the scan gate
+have run in Actions. An amd64 image has been built and run on a GitHub runner by hand (see "What works"), but not by
+this workflow.
 
 ## Security notes
 
-Checked on this branch (19 Oct 2026): shellcheck on every script, hadolint on the Dockerfile, a secret scan of
-everything the PR adds, the image's contents, and a vulnerability scan with Trivy. The scan numbers change from
-day to day, so they are not recorded here; the command to rerun it is under "Updating dependencies".
+Checked when this was written: shellcheck on every script, hadolint on the Dockerfile, a secret scan of the files,
+the image's contents, and a vulnerability scan with Trivy. The scan numbers change from day to day, so they are not
+recorded here; the command to rerun it is under "Updating dependencies".
 
-**Fixed in this PR:**
+**In place:**
 
 - The base image is pinned by digest, and OpenShell's installer is fetched from its pinned tag, not `main`.
 - A failed download inside a piped build step fails the build.
@@ -163,15 +184,19 @@ day to day, so they are not recorded here; the command to rerun it is under "Upd
 - The safety hooks run from a read-only location (`/opt/kyverno`), and the build checks that the agent cannot write
   to them or to Hermes' code.
 - The final image contains only live files (see "How the image is built, and why").
+- The GitHub MCP tool allowlist is enforced by the proxy as well as by `config.yaml`, and the build checks they match.
+- The one CRITICAL the scan found (PyJWT, an authentication bypass) is patched in the image, and the publish workflow
+  refuses to release an image with a fixable CRITICAL.
 
 **Known limits, not fixed:**
 
 - The agent can edit its own `config.yaml` inside the sandbox (above).
 - Hermes' installer is fetched from Hermes' website while the image is built (`curl | bash`). That is the same trust as
   running Hermes at all, and the Hermes commit it installs is pinned, but the script itself is not.
-- Hermes' own pinned dependency set had known vulnerabilities in the Trivy scan: Python and Node libraries, none in OS
-  packages, including one CRITICAL (an authentication bypass in PyJWT). They come from the Hermes version we pin, so
-  the fix is to bump it. Whether each one is reachable in this setup has not been assessed.
+- Hermes' own pinned dependency set has known vulnerabilities below CRITICAL in the Trivy scan (Python and Node
+  libraries, none in OS packages). They come from the Hermes version we pin, so the fix is to bump it. Whether each one
+  is reachable in this setup has not been assessed. PyJWT is the exception: Hermes pins 2.13.0 and the image overrides
+  it with 2.14.0, which Hermes itself does not declare support for; the build's checks pass with it.
 - Packages the memory plugin brings in (`fastembed`, `onnxruntime`, ...) and `apt` packages are resolved when the
   image is built, not locked with hashes. `mnemosyne-hermes`, `mnemosyne-memory` and `anthropic` are pinned by hand.
 - The published image is not signed and has no SBOM or provenance attestation.
@@ -189,9 +214,10 @@ Things are pinned so builds are reproducible, which means updates are deliberate
 | Base image | Both `FROM ...@sha256:` lines in `container/Dockerfile` | Dependabot proposes a new digest weekly. Build, then scan it (below) |
 | GitHub Actions | Commit hashes in `.github/workflows/` | Dependabot, weekly |
 | Hermes | `HERMES_COMMIT` in the Dockerfile | By hand. See below |
-| `mnemosyne-hermes`, `mnemosyne-memory`, `anthropic` | The `uv pip install` line in the Dockerfile | By hand, when Hermes moves |
+| `mnemosyne-hermes`, `mnemosyne-memory`, `anthropic`, `PyJWT` | The `uv pip install` line in the Dockerfile | By hand, when Hermes moves. Drop the PyJWT pin once Hermes requires 2.14.0 or newer |
 | OpenShell | `OPENSHELL_VERSION` in `container/kyverno` | By hand. See below |
 | shellcheck, hadolint | Digests in `.github/workflows/container-lint.yml` | By hand, occasionally |
+| Trivy (the release gate) | Digest in `.github/workflows/container-image.yml` | By hand, occasionally |
 
 **Bumping Hermes** (about monthly, and whenever a scan shows a CRITICAL):
 
@@ -221,12 +247,13 @@ Anything Hermes would fetch, install or ask on first use is done when the image 
 - the profile, skills, hook paths and terminal settings (`container/setup-profile.sh`)
 - the mnemosyne memory plugin, pinned to `mnemosyne-hermes 0.7.3` and `mnemosyne-memory 4.0.0b3` (0.7.4
   stops the memory provider from starting with this Hermes)
-- the `anthropic` library, and the embedding model the memory plugin reads from the profile cache
+- the `anthropic` library (and a patched PyJWT), and the embedding model the memory plugin reads from the profile cache
 - approval of the profile's own hooks (`hooks_auto_accept`)
 - removal of what the finished image does not need: the Python environments that Hermes' installer and plugin installs
   leave behind (about 0.9 GB; Hermes' own `hermes pm gc` treats them as still in use) and its package download cache.
   They are only history for an in-place repair, which needs the network. The Dockerfile has two stages, so the final
   image is assembled from live files only and none of that is left in a layer
 
-The build fails if the memory provider does not load, and its last step runs a full memory cycle (import,
+The build fails if the memory provider does not load, if the settings it applied did not land (hook paths, Slack removal,
+auto-approved hooks, terminal backend and tools), if the proxy's tool allowlist differs from `config.yaml`, and its last step runs a full memory cycle (import,
 search, consolidate) with no network at all, so a missing download shows up at build time, not on a laptop.

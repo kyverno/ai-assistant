@@ -66,13 +66,18 @@ RUN export HERMES_HOME=/opt/hermes-home/.hermes \
 # environment Hermes is actually running. Remove it when the Hermes pin moves to a version that works with
 # newer mnemosyne.
 #
+# PyJWT is bumped for the same reason: Hermes pins 2.13.0, which has CVE-2026-102268 (authentication bypass via
+# improper public key validation, fixed in 2.14.0). Hermes only verifies JWTs in dashboard sign-in providers this
+# image does not use, so it was probably not reachable, but there is no reason to ship it. Remove the pin when the
+# Hermes pin moves to a version that requires 2.14.0 or newer.
+#
 # The final lines fail the build if either library is not really usable: `anthropic` must import, and
 # mnemosyne must come up as the memory provider (it fails silently otherwise).
 RUN export HERMES_HOME=/opt/hermes-home/.hermes \
     && PY="$(ls -d /opt/hermes-home/.hermes/tools/python-*/bin/python3 | head -n 1)" \
     && UV="$(find /opt/hermes-home/.hermes/tools -name uv -type f -print -quit)" \
     && ACTIVE="$(HERMES_HOME=$HERMES_HOME/profiles/kyverno "$PY" -I -c 'import sys; sys.path.insert(0, "/opt/hermes"); import hermes_bootstrap, mnemosyne_hermes as m; print(m.__file__.split("/lib/python")[0])' | tail -n 1)" \
-    && "$UV" pip install --python "$ACTIVE/bin/python" --prerelease=allow "mnemosyne-hermes==0.7.3" "mnemosyne-memory==4.0.0b3" "anthropic==0.87.0" \
+    && "$UV" pip install --python "$ACTIVE/bin/python" --prerelease=allow "mnemosyne-hermes==0.7.3" "mnemosyne-memory==4.0.0b3" "anthropic==0.87.0" "PyJWT[crypto]==2.14.0" \
     && HERMES_HOME=$HERMES_HOME/profiles/kyverno "$PY" -I -c '\
 import sys; sys.path.insert(0, "/opt/hermes"); import hermes_bootstrap, anthropic; \
 from plugins.memory import load_memory_provider; \
@@ -122,6 +127,8 @@ ENV HOME=/opt/hermes-home
 # Hermes' code and the profile stay root-owned; Hermes' home belongs to the sandbox user (uid 1000).
 COPY --from=build /opt/hermes /opt/hermes
 COPY --from=build /opt/kyverno /opt/kyverno
+# Only for the build-time check below: the proxy's tool allowlist lives in this profile, outside the sandbox.
+COPY --chown=1000:1000 container/providers/repo-github.yaml /tmp/repo-github.yaml
 COPY --from=build --chown=1000:1000 /opt/hermes-home /opt/hermes-home
 RUN ln -s /opt/hermes-home/.local/bin/hermes /usr/local/bin/hermes
 COPY --chmod=755 container/kyverno-start container/kyverno-main /usr/local/bin/
@@ -130,7 +137,8 @@ COPY --chmod=755 container/kyverno-start container/kyverno-main /usr/local/bin/
 USER 1000:1000
 
 # Proof that the finished image works, run on the copied files with NO network: Hermes knows its own version,
-# the agent cannot write to Hermes' code or the safety hooks, `anthropic` imports, mnemosyne comes up as the memory provider, and a full memory cycle passes (import two
+# the agent cannot write to Hermes' code or the safety hooks, the proxy's GitHub tool allowlist equals the one in config.yaml,
+# `anthropic` imports, mnemosyne comes up as the memory provider, and a full memory cycle passes (import two
 # memories, search them, which needs the embedding model read locally, and run a consolidation). If the cleanup
 # above removed something that was needed, or the plugin needs anything from the internet, this fails the build
 # and the output says what. The warm-up data is removed after, so every user starts with an empty memory.
@@ -148,6 +156,16 @@ from plugins.memory import load_memory_provider; \
 p = load_memory_provider("mnemosyne"); \
 print("anthropic", anthropic.__version__, "| memory provider:", type(p).__name__ if p else None); \
 sys.exit(0 if p else 1)' \
+    && HERMES_HOME=$HERMES_HOME/profiles/kyverno "$PY" -I -c '\
+import re, sys; \
+cfg = open("/opt/hermes-home/.hermes/profiles/kyverno/config.yaml").read(); \
+want = re.search(r"X-MCP-Tools: \"([^\"]+)\"", cfg).group(1).split(","); \
+prof = open("/tmp/repo-github.yaml").read(); \
+have = [t.strip() for t in re.search(r"any: \[(.*?)\]", prof, re.S).group(1).split(",") if t.strip()]; \
+ok = have == want; \
+print("proxy tool allowlist matches config.yaml:", ok, "(%d tools)" % len(want)); \
+sys.exit(0 if ok else 1)' \
+    && rm -f /tmp/repo-github.yaml \
     && printf '%s' '{"mnemosyne_export": {"version": "1.3"}, "working_memory": [{"id": "warmup:1", "content": "Kyverno warm-up memory: the review queue is ordered by dependency tier.", "source": "warmup", "timestamp": "2026-01-01T00:00:00", "session_id": "warmup", "importance": 0.9, "scope": "global", "pinned": 1}]}' > /tmp/warmup.json \
     && hermes -p kyverno mnemosyne import -i /tmp/warmup.json --force \
     && OUT="$(hermes -p kyverno mnemosyne inspect 'dependency tier review queue' 2>&1)" \

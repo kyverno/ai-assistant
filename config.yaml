@@ -31,7 +31,9 @@ mcp_servers:
   github:
     # GitHub-hosted MCP server. X-MCP-Tools is the server-side allowlist and must list exactly
     # the tools under `tools.include` below (scripts/install.sh checks this): any other tool,
-    # including merge, does not exist for this connection.
+    # including merge, does not exist for this connection. In the sandbox the same list is also enforced by the
+    # OpenShell proxy (container/providers/repo-github.yaml), where the agent cannot edit it; keep the two equal,
+    # the image build fails if they differ.
     url: https://api.githubcopilot.com/mcp/
     headers:
       Authorization: "Bearer ${REPO_GITHUB_TOKEN}"

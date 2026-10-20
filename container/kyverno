@@ -150,6 +150,9 @@ if [ "$BUILD" = 1 ]; then
   IMAGE="kyverno-assistant:dev"
   info "building $IMAGE from this checkout (the first build takes several minutes)..."
   docker build -f "$REPO_ROOT/container/Dockerfile" -t "$IMAGE" "$REPO_ROOT" || { fail "image build failed"; exit 1; }
+  if [ "$UPGRADE" != 1 ] && sandbox_listed; then
+    info "note: '$SANDBOX' already exists and keeps running the image it was made from; add --upgrade to switch it to this build"
+  fi
 elif [ "$UPGRADE" = 1 ] || ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
   info "pulling $IMAGE..."
   if ! docker pull "$IMAGE"; then
@@ -182,7 +185,7 @@ else
   [ -z "$REPO" ] && read -r -p "  Repo to manage (owner/repo) [kyverno/kyverno]: " REPO
   REPO="${REPO:-kyverno/kyverno}"
   [[ "$REPO" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9_.-]+$ && "${REPO#*/}" != "." && "${REPO#*/}" != ".." ]] || { fail "'$REPO' is not an owner/repo name (letters, digits, dots, dashes, underscores)"; exit 1; }
-  info "Paste your fine-grained GitHub token (see README step 2). It goes to OpenShell, never into the sandbox."
+  info "Paste your fine-grained GitHub token (see README step 1). It goes to OpenShell, never into the sandbox."
   PAT=""
   { read -r -s -p "  GitHub token: " PAT </dev/tty; } 2>/dev/null
   echo
@@ -222,7 +225,8 @@ for P in "${WANT_PROVIDERS[@]+"${WANT_PROVIDERS[@]}"}"; do
     { read -r -s -p "  $P API key: " KEY </dev/tty; } 2>/dev/null
     echo
     [ -z "$KEY" ] && { fail "no $P key entered (this step needs a terminal to ask for it)"; exit 1; }
-    env "$VAR=$KEY" openshell provider create --name "kyverno-$P" --type "kyverno-$P" --credential "$VAR" >/dev/null 2>&1 \
+    # Exported in a subshell, not passed through env(1): an argument would show in the process list.
+    ( export "$VAR=$KEY"; openshell provider create --name "kyverno-$P" --type "kyverno-$P" --credential "$VAR" >/dev/null 2>&1 ) \
       || { fail "could not store the $P key in OpenShell"; exit 1; }
     unset KEY
     pass "$P key stored in OpenShell"
@@ -283,7 +287,7 @@ pass "sandbox '$SANDBOX' is ready"
 # The dashboard runs inside the sandbox (started by its main process); forward a port on this laptop to it.
 if openshell sandbox exec -n "$SANDBOX" --no-tty -- pgrep -f "dashboard --isolated" >/dev/null 2>&1; then
   if ! openshell forward list 2>/dev/null | awk -v n="$SANDBOX" -v p="$DASH_PORT" '$2==n && $4==p{f=1} END{exit !f}'; then
-    openshell forward start "$DASH_PORT" "$SANDBOX" -d >/dev/null 2>&1 || info "could not forward port $DASH_PORT (is it in use?); set KYVERNO_DASHBOARD_PORT to another one"
+    openshell forward start "127.0.0.1:$DASH_PORT" "$SANDBOX" -d >/dev/null 2>&1 || info "could not forward port $DASH_PORT (is it in use?); set KYVERNO_DASHBOARD_PORT to another one"
   fi
   info "dashboard: http://127.0.0.1:$DASH_PORT/kyverno?profile=kyverno"
 else

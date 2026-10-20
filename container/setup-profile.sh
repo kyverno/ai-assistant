@@ -80,6 +80,18 @@ step "memory plugin: never go online for its embedding model (it is already in t
 echo 'HF_HUB_OFFLINE=1' >> "$PROFILE_DIR/.env"
 
 step "check"
-grep -c 'mcp-slack' "$PROFILE_DIR/config.yaml" | sed 's/^/   mcp-slack lines left in config: /'
-grep -E '^\s+command: ".*/hooks/' "$PROFILE_DIR/config.yaml" | head -3 | sed 's/^ */   /'
+# hq() only reports a failed command, so make the settings that matter fail the build if they did not land.
+CFG="$PROFILE_DIR/config.yaml"
+grep -E '^\s+command: ".*/hooks/' "$CFG" | head -3 | sed 's/^ */   /'
 hermes -p "$PROFILE" mcp list </dev/null 2>&1 | sed 's/\x1b\[[0-9;]*m//g' | grep -E 'github|slack' | sed 's/^ */   /'
+bad=0
+require() { local what="$1"; shift; "$@" || { echo "   FAILED: $what" >&2; bad=1; }; }
+forbid() { local what="$1"; shift; if "$@"; then echo "   FAILED: $what" >&2; bad=1; fi; }
+forbid "a hook command still points at ./hooks/" grep -qE 'command: "\./hooks/' "$CFG"
+require "hook commands point at $SRC/hooks" grep -qE "command: \"$SRC/hooks/" "$CFG"
+forbid "the Slack tool is still in the config" grep -q 'mcp-slack' "$CFG"
+require "hooks_auto_accept is on" grep -qE '^hooks_auto_accept: *true' "$CFG"
+require "the terminal backend is local" grep -qE '^ +backend: *local' "$CFG"
+require "terminal is enabled" grep -qE '^    - terminal$' "$CFG"
+require "file is enabled" grep -qE '^    - file$' "$CFG"
+[ "$bad" = 0 ] || exit 1

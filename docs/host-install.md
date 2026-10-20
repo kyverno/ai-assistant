@@ -2,9 +2,9 @@
 
 > **The recommended way to run the assistant is now inside an OpenShell sandbox:** see the
 > [README](../README.md) and [`container.md`](container.md). This page is the older route, where Hermes is installed
-> on your own machine and `scripts/install.sh` sets up a profile. It still works, it supports Slack and the dashboard
+> on your own machine and `scripts/install.sh` sets up a profile. It still works, it supports Slack and scheduled jobs
 > (which the sandbox does not yet), and it needs more of your machine set up correctly: the Hermes CLI, Python with
-> PyYAML, no conflicting `REPO_GITHUB_TOKEN`, and so on. The agent also runs with access to your own files and network, which
+> PyYAML, no stray `GITHUB_TOKEN` in your shell, and so on. The agent also runs with access to your own files and network, which
 > the sandbox does not allow.
 
 ## Quick start
@@ -154,3 +154,18 @@ hermes cron edit kyverno-review-digest    # change the time or channel
 Pulls the latest version of this repo and re-runs the installer: the profile (config, skills,
 hooks), the sandbox policy and image, and the checks are refreshed. Your `.env`, model choice and
 sandboxed terminal are kept.
+
+## The dashboard
+
+A browser board that shows what the agent just told you, linked, grouped and sortable, so you don't
+scroll the chat or copy links by hand. (The sandbox runs it too; see the [README](../README.md#the-dashboard).)
+
+```bash
+hermes -p kyverno dashboard
+```
+
+Pick **Kyverno** in the sidebar under Plugins, or open
+`http://127.0.0.1:9119/kyverno?profile=kyverno`. It refreshes every 15 seconds. Keep it open next to
+the chat: it fills when the agent answers a queue, stale-PR, issue-triage or Discussions request,
+not in the background. The tabs are described in the [README](../README.md#the-dashboard). The Kyverno tab is
+read-only; confirming and acting still happen in the chat.

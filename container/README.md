@@ -23,8 +23,8 @@ troubleshooting are all in **[docs/container.md](../docs/container.md)**.
 | `kyverno-main` | The sandbox's main process: runs the dashboard in the background and keeps the sandbox alive |
 | `kyverno` | The launcher you run on your laptop |
 | `restore-state.sh` | Uploaded by the launcher during `--upgrade` to put your state back |
-| `policy.yaml` | The sandbox's filesystem and network policy |
-| `providers/*.yaml` | OpenShell provider profiles: the GitHub token and the model-provider keys |
+| `policy.yaml` | The sandbox's filesystem and network policy. Keep the Copilot inference paths listed by name (see docs/container.md, "Safety layers") |
+| `providers/*.yaml` | OpenShell provider profiles: the GitHub token (with the MCP tool allowlist the proxy enforces) and the model-provider keys |
 | `hooks/require-sandbox-terminal.sh` | Lets the terminal run locally, but only inside an OpenShell sandbox |
 
 ## Not done yet

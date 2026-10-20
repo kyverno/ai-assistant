@@ -28,17 +28,41 @@ endpoints:
     protocol: graphql
     access: read-only
     enforcement: enforce
-  # The hosted GitHub MCP server. Which tools exist is decided by the X-MCP-Tools header in config.yaml.
-  # Only /mcp/ gets the token; Copilot inference on the same host carries its own bearer and gets none.
+  # The hosted GitHub MCP server, checked tool by tool by the proxy, outside the sandbox: the agent cannot edit this
+  # the way it could edit config.yaml. Only the tools listed here can be called; everything else, merges included,
+  # is refused, and so is a batch that hides one among allowed calls. Only /mcp/ gets the token; Copilot inference
+  # on the same host carries its own bearer and gets none. For this to hold, container/policy.yaml must not allow
+  # all paths on api.githubcopilot.com: OpenShell admits a request if any rule for the host admits it.
+  # The list must equal X-MCP-Tools in config.yaml; the image build fails if it does not.
   - host: api.githubcopilot.com
     port: 443
     path: /mcp/
-    protocol: rest
+    protocol: mcp
     enforcement: enforce
+    mcp:
+      versions: ["2025-03-26", "2025-06-18", "2025-11-25"]
+      allow_all_known_mcp_methods: true
     rules:
-      - allow: { method: GET, path: "/mcp/**" }
-      - allow: { method: POST, path: "/mcp/**" }
-      - allow: { method: DELETE, path: "/mcp/**" }
+      - allow:
+          tool:
+            any: [
+              search_pull_requests, pull_request_read, issue_read, search_issues, list_issues, list_label,
+              get_label, get_file_contents, get_repository_tree, search_code, get_team_members, get_teams,
+              list_releases, get_latest_release, list_code_scanning_alerts, get_code_scanning_alert,
+              list_dependabot_alerts, get_dependabot_alert, list_secret_scanning_alerts, get_secret_scanning_alert,
+              actions_list, actions_get, get_job_logs, issue_write, add_issue_comment, update_issue_comment,
+              pull_request_review_write, add_comment_to_pending_review, add_reply_to_pull_request_comment,
+              update_pull_request_branch, request_copilot_review, list_discussion_categories, list_discussions,
+              get_discussion, get_discussion_comments, discussion_comment_write, get_commit, list_commits,
+              list_branches, list_tags, get_tag, get_release_by_tag, search_commits, list_pull_requests,
+              search_repositories, search_users, get_me, check_dependency_vulnerabilities,
+              get_global_security_advisory, list_global_security_advisories, get_code_quality_finding,
+              projects_get, projects_list, repository_ruleset_read, list_issue_types, list_issue_fields,
+              custom_properties_read, list_repository_collaborators, semantic_issue_similarity_search, label_write,
+              sub_issue_write, update_pull_request, projects_write
+              ]
+    deny_rules:
+      - { method: tools/call, tool: { any: ["*merge*", "*delete*", "*force_push*"] } }
 binaries:
   # Hermes' interpreter. The directory name carries the Python version and build date, hence the glob.
   - /opt/hermes-home/.hermes/tools/python-*/bin/python*

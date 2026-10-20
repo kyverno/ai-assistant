@@ -68,13 +68,21 @@ network_policies:
   copilot_inference:
     name: copilot_inference
     endpoints:
+      # api.githubcopilot.com also hosts the GitHub MCP server (/mcp/), which the repo-github provider profile checks
+      # tool by tool. OpenShell admits a request if any rule for the host admits it, so these rules must not cover
+      # /mcp/: an allow-all here would let every tool call through, merges included. Hence the inference paths by name.
       - host: api.githubcopilot.com
         port: 443
         protocol: rest
         enforcement: enforce
         rules:
-          - allow: { method: GET, path: "/**" }
-          - allow: { method: POST, path: "/**" }
+          - allow: { method: GET, path: "/models" }
+          - allow: { method: GET, path: "/models/**" }
+          - allow: { method: POST, path: "/chat/completions" }
+          - allow: { method: POST, path: "/responses" }
+          - allow: { method: POST, path: "/responses/**" }
+          - allow: { method: POST, path: "/embeddings" }
+          - allow: { method: POST, path: "/v1/**" }
       - host: api.individual.githubcopilot.com
         port: 443
         protocol: rest

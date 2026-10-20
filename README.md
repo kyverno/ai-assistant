@@ -226,28 +226,31 @@ What the sandbox can reach on the internet, and nothing else:
 | Destination | Why |
 |---|---|
 | `api.github.com` (reads only) | The PR and issue data |
-| The GitHub MCP server (`api.githubcopilot.com/mcp/`) | The tools the agent uses to look things up and to act, with your token added on the way out |
-| GitHub Copilot's model service | The model, when you use Copilot |
+| The GitHub MCP server (`api.githubcopilot.com/mcp/`) | The tools the agent uses to look things up and to act, with your token added on the way out. The gateway lets through only the tools on the allowlist in `config.yaml` |
+| GitHub Copilot's model service | The model, when you use Copilot. Only its inference paths, not `/mcp/` |
 | `github.com` sign-in pages | Only the two device-code endpoints, for the Copilot sign-in |
-| `github.com`, `raw.githubusercontent.com` (read-only) | Lets the agent's terminal read public code |
+| `github.com`, `codeload.github.com`, `raw.githubusercontent.com` (read-only) | Lets the agent's terminal read public code |
 | `models.dev` (read-only) | The list of models for `/model` |
-| Your chosen model provider | Only if you passed `--provider` |
+| A model provider you added | Only providers whose key you stored with `--provider` |
 
 ## How it stays safe
 
-The agent cannot merge, and no single mechanism is trusted on its own. Five independent layers:
+The agent cannot merge, and no single mechanism is trusted on its own. Five layers, and the ones that matter most
+are enforced by OpenShell outside the sandbox, where the agent cannot edit them:
 
-1. The token has no merge permission (Pull requests: write, but not Contents: write).
-2. The gateway refuses merges, repository deletion and GraphQL mutations outright.
-3. The GitHub tool list has no merge tool.
-4. A hook blocks any tool whose name looks like merge, delete or force-push.
-5. The network allowlist denies everything not listed above.
+1. **The token has no merge permission** (Pull requests: write, but not Contents: write). GitHub itself refuses.
+2. **The gateway checks every GitHub call.** On `api.github.com` it allows reads only and refuses merges, repository
+   deletion and GraphQL mutations. On the GitHub MCP server it checks each tool call against the allowlist and
+   refuses everything else, plus anything named like merge, delete or force-push, even inside a batched request.
+3. **The tool allowlist in `config.yaml`**: the GitHub tool list has no merge tool.
+4. **A hook** blocks any tool whose name looks like merge, delete or force-push.
+5. **The network allowlist** denies everything not listed above.
 
-Your token never enters the sandbox, so a prompt-injected agent cannot leak it. One trade-off compared with the
-older host install: Hermes and its configuration now live in the same sandbox as the agent, so the agent could
-edit its own `config.yaml` (the hook scripts themselves are read-only to it). Layers 1, 2 and 5 do not depend on
-that file. The details, including exactly
-what was tested, are in [`docs/container.md`](docs/container.md).
+Layers 1, 2 and 5 do not depend on any file inside the sandbox. Layers 3 and 4 do: the agent has a terminal and file
+tools, so a manipulated agent could edit its own `config.yaml` (the hook scripts are read-only to it). Layers 1, 2 and
+5 are what you rely on then.
+Your token never enters the sandbox, so a prompt-injected agent cannot leak it. The details, including exactly what
+was tested, are in [`docs/container.md`](docs/container.md).
 
 ## Why it is built this way
 
@@ -334,10 +337,14 @@ when the agent answers a queue, stale-PR, issue-triage or Discussions request, n
 | **Detail panel** | Summary, unresolved threads, a graph of related PRs and issues, and any drafted comment awaiting your confirmation, with a copy button. |
 | **Activity** | Every action you confirmed (approvals, comments, nudges, closes, deferrals) with a timestamp and a link. |
 
-The dashboard is read-only. Confirming and acting still happen in the chat. It is reachable only from your own
-laptop (the port is forwarded to `127.0.0.1`), and port 9219 is used so it does not clash with a Hermes dashboard
-on 9119. Set `KYVERNO_DASHBOARD_PORT` to change it. Its Settings pages can show what is in the sandbox's settings
-file, which includes the Copilot sign-in token. Your GitHub token is not there.
+The Kyverno tab is read-only. Confirming and acting still happen in the chat. It is reachable only from your own
+laptop (the port is forwarded to `127.0.0.1` explicitly), and port 9219 is used so it does not clash with a Hermes
+dashboard on 9119. Set `KYVERNO_DASHBOARD_PORT` to change it. Hermes protects the dashboard itself: a session token
+that changes on every start, a check that the request's `Host` matches the address it listens on (against DNS
+rebinding), and cross-origin requests only from localhost. It is still Hermes' whole dashboard, not just our tab: its
+Settings and chat pages are served too, and the Settings pages can show what is in the sandbox's settings file, which
+includes the Copilot sign-in token. Your GitHub token is not there. If you do not want it, stop it with
+`openshell forward stop 9219` (the launcher starts it again next time you run it).
 
 ## Slack and scheduled jobs
 
