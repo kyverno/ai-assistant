@@ -64,6 +64,7 @@ Verified means I ran it in a real sandbox on the current image.
 | Anthropic / NVIDIA / OpenAI keys | Partly | The request reaches the provider with the key swapped in. A real reply is untested |
 | Agent terminal and file tools | Enabled, not exercised | They run locally in the sandbox; the hook allows them only inside OpenShell |
 | Slack | Not available | The Slack MCP server runs under Docker, which a sandbox does not have |
+| Linux (amd64) | Verified in CI | On a GitHub runner (Ubuntu 24.04, kernel 6.17, Docker Engine 28): the whole stack ran, with the placeholder token, the proxy refusing a merge, read-only hooks and the dashboard answering. Not a real laptop; arm64 Linux is untried |
 | Dashboard | Verified | Runs in the sandbox; the launcher forwards `127.0.0.1:9219`. A sample item written through the agent's own `update_dashboard` function was served by it, with the Kyverno tab's script and styles loading |
 | Scheduled jobs (cron, the Slack digest) | Not available | They run inside the Hermes gateway, which is not started |
 | `AGENTS.md` cache seeding | Not done | `kyverno-context` falls back to searching GitHub |

@@ -86,7 +86,7 @@ model sign-in. After that, `container/kyverno` alone gets you back in. Everythin
 
 | Need | Details |
 |---|---|
-| **A Mac with Apple Silicon**, or Linux | Tested on Apple Silicon. Intel and other Linux machines need the published image (see [step 2](#2-get-the-image)); that image is built by CI but not tested yet. |
+| **A Mac with Apple Silicon**, or Linux | Tested on Apple Silicon only. See [what runs on which machine](#what-runs-on-which-machine). |
 | **[Docker Desktop](https://docs.docker.com/get-docker/) 4.60 or newer** | Must be running. Give Docker at least 4 GB of memory (Docker Desktop → Settings → Resources); an 8 GB Mac is enough. |
 | **About 20 GB of free disk** | The image is about 4.2 GB. |
 | **A GitHub token** | [Step 1](#1-create-a-github-token). |
@@ -94,6 +94,21 @@ model sign-in. After that, `container/kyverno` alone gets you back in. Everythin
 
 You do not install Hermes, Python or OpenShell yourself. If OpenShell is missing, the launcher installs it using
 OpenShell's own installer.
+
+### What runs on which machine
+
+The image is built for both chip families (Apple Silicon / arm64, and Intel / AMD, called amd64) and passes its
+build-time checks on both. What decides whether the whole thing runs is Docker, OpenShell and the launcher around it.
+
+| Your machine | Status |
+|---|---|
+| **Mac with Apple Silicon** | Tested: this is where everything was developed and checked, including real chats |
+| **Linux, x86_64** | Checked end to end on a GitHub Linux runner (Ubuntu 24.04, kernel 6.17, Docker Engine 28): OpenShell installed, the sandbox started, the token stayed a placeholder, merges were refused by the proxy, the hooks were read-only and the dashboard answered. Not tried on a real Linux laptop. The kernel needs Landlock (Linux 5.13 or newer) |
+| **Linux, arm64** | The image is built for it; the launcher has not been tried there |
+| **Intel Mac** | Not supported: OpenShell supports macOS on Apple Silicon only |
+| **Windows** | OpenShell supports it through WSL2 (experimental); run the launcher inside WSL2. Untested |
+
+The launcher checks your machine first and says so plainly if it is one it cannot support.
 
 ### 1. Create a GitHub token
 

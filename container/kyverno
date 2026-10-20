@@ -93,6 +93,23 @@ restore_state() {
 }
 
 step "1. Docker and OpenShell"
+# OpenShell supports macOS on Apple Silicon and Linux (Windows through WSL2, which shows up here as Linux).
+# KYVERNO_SKIP_PLATFORM_CHECK=1 skips this.
+if [ -z "${KYVERNO_SKIP_PLATFORM_CHECK:-}" ]; then
+  case "$(uname -s)-$(uname -m)" in
+    Darwin-arm64) ;;
+    Darwin-x86_64)
+      fail "this is an Intel Mac, and OpenShell supports macOS on Apple Silicon only"
+      info "(set KYVERNO_SKIP_PLATFORM_CHECK=1 to try anyway)"
+      exit 1 ;;
+    Linux-x86_64|Linux-aarch64)
+      info "Linux: checked end to end on an Ubuntu 24.04 x86_64 CI runner, but not on a real Linux laptop, and not on arm64."
+      info "The kernel needs Landlock (Linux 5.13 or newer); if the sandbox will not start, that is the first thing to check." ;;
+    *)
+      fail "unsupported platform: $(uname -s) $(uname -m) (OpenShell supports Apple Silicon macOS and Linux; on Windows use WSL2)"
+      exit 1 ;;
+  esac
+fi
 if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
   fail "Docker is not installed or not running — start Docker Desktop (4.60 or newer) and re-run"
   exit 1

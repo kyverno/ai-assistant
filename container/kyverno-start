@@ -140,7 +140,9 @@ if [ "${KYVERNO_SKIP_COPILOT:-}" != 1 ] && [ -z "$(env_get COPILOT_GITHUB_TOKEN)
   step "GitHub Copilot sign-in"
   info "Open the page it prints in your browser on your laptop, enter the code, and approve."
   info "(To use another model provider instead, quit and start the launcher with --provider anthropic|openai|nvidia.)"
-  if HERMES_HOME="$PROFILE_DIR" "$HERMES_PY" -I - <<'PY'
+  # The search library behind the memory plugin prints some harmless lines about CPU details this sandbox hides;
+  # filter those out of the sign-in step (anything else on stderr still shows).
+  if HERMES_HOME="$PROFILE_DIR" "$HERMES_PY" -I - 2> >(grep -v -E 'cpuinfo|onnxruntime' >&2) <<'PY'
 import sys
 sys.path.insert(0, "/opt/hermes")
 import hermes_bootstrap
@@ -166,4 +168,5 @@ if [ "$NEW_LOGIN" = 1 ] || { [ "$HAS_PROVIDER_KEY" = 1 ] && [ ! -f "$PROFILE_DIR
 fi
 
 step "Starting"
+info "The first screen takes about 30 seconds to appear."
 exec hermes -p "$PROFILE" chat "$@"
