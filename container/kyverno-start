@@ -1,0 +1,171 @@
+#!/bin/bash
+# Runs inside the OpenShell sandbox: what is specific to you on the first run, then the chat.
+# The profile, its skills, hooks and memory plugin are already in the image (container/setup-profile.sh
+# ran when it was built), so this is quick. The launcher calls it with:
+#   openshell sandbox exec --tty -- kyverno-start [--repo R] [--login L]
+# It is idempotent: later runs skip what is already done.
+#
+#   KYVERNO_SETUP_ONLY=1    stop after setup (no sign-in, no chat)
+#   KYVERNO_SKIP_COPILOT=1  don't offer the Copilot sign-in
+set -uo pipefail
+
+export HERMES_HOME=/opt/hermes-home/.hermes
+export PATH="/opt/hermes-home/.local/bin:$PATH"
+PROFILE=kyverno
+PROFILE_DIR="$HERMES_HOME/profiles/$PROFILE"
+ENV_FILE="$PROFILE_DIR/.env"
+DONE_MARK="$PROFILE_DIR/.kyverno-user-setup"
+HERMES_PY=$(compgen -G "/opt/hermes-home/.hermes/tools/python-*/bin/python3" | head -n 1)
+
+# What GitHub allows: an owner/repo with letters, digits, dots, dashes and underscores; a username with letters,
+# digits and dashes. Checked because these values are written to a settings file and used in URLs.
+valid_repo() { [[ "$1" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9_.-]+$ && "${1#*/}" != "." && "${1#*/}" != ".." ]]; }
+valid_login() { [[ "$1" =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,38})$ ]]; }
+
+pass() { printf '  \033[32m✓\033[0m %s\n' "$1"; }
+fail() { printf '  \033[31m✗\033[0m %s\n' "$1" >&2; }
+info() { printf '  %s\n' "$1"; }
+step() { printf '\n\033[1m%s\033[0m\n' "$1"; }
+
+REPO="${KYVERNO_REPO:-}"
+LOGIN="${MAINTAINER_GITHUB_LOGIN:-}"
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --repo) REPO="${2:-}"; shift 2 ;;
+    --login) LOGIN="${2:-}"; shift 2 ;;
+    --) shift; break ;;
+    *) break ;;
+  esac
+done
+
+step "Checks"
+if [ ! -d /run/openshell-supervisor-ca ]; then
+  fail "this is not running inside an OpenShell sandbox — start it with the launcher (container/kyverno)"
+  exit 1
+fi
+if [ -z "${REPO_GITHUB_TOKEN:-}" ]; then
+  fail "REPO_GITHUB_TOKEN is not set — the sandbox was created without the GitHub provider; re-run the launcher"
+  exit 1
+fi
+if [ -z "$HERMES_PY" ] || [ ! -f "$PROFILE_DIR/distribution.yaml" ]; then
+  fail "the Hermes profile is missing from the image — rebuild it: container/kyverno --build"
+  exit 1
+fi
+# REPO_GITHUB_TOKEN holds an opaque placeholder here, never the real token: the proxy swaps it in on
+# requests to GitHub.
+pass "inside an OpenShell sandbox; GitHub token is a placeholder, the real one stays outside"
+
+# --- helpers on the .env file (plain text, no YAML needed) ---
+env_get() {
+  ENV_FILE="$ENV_FILE" KEY="$1" python3 -c "
+import os
+for line in open(os.environ['ENV_FILE']):
+    line = line.strip()
+    if line and not line.startswith('#') and '=' in line:
+        k, _, v = line.partition('=')
+        if k.strip() == os.environ['KEY']:
+            print(v.strip()); break
+" 2>/dev/null
+}
+env_set() {
+  ENV_FILE="$ENV_FILE" KEY="$1" VALUE="$2" python3 -c "
+import os
+path, key, value = os.environ['ENV_FILE'], os.environ['KEY'], os.environ['VALUE']
+lines = open(path).read().splitlines()
+for i, line in enumerate(lines):
+    if line.split('=', 1)[0].strip() == key and not line.lstrip().startswith('#'):
+        lines[i] = f'{key}={value}'
+        break
+else:
+    lines.append(f'{key}={value}')
+open(path, 'w').write('\n'.join(lines) + '\n')
+"
+}
+
+step "Settings"
+[ -f "$ENV_FILE" ] || { [ -f "$PROFILE_DIR/.env.EXAMPLE" ] && cp "$PROFILE_DIR/.env.EXAMPLE" "$ENV_FILE" || : > "$ENV_FILE"; }
+# The token is deliberately not in this file. Only who you are and which repo.
+if [ -z "$(env_get KYVERNO_REPO)" ]; then
+  [ -z "$REPO" ] && read -r -p "  Repo to manage (owner/repo) [kyverno/kyverno]: " REPO
+  REPO="${REPO:-kyverno/kyverno}"
+  valid_repo "$REPO" || { fail "'$REPO' is not an owner/repo name (letters, digits, dots, dashes, underscores)"; exit 1; }
+  env_set KYVERNO_REPO "$REPO"
+fi
+if [ -z "$(env_get MAINTAINER_GITHUB_LOGIN)" ]; then
+  [ -z "$LOGIN" ] && read -r -p "  Your GitHub username: " LOGIN
+  if [ -n "$LOGIN" ]; then
+    valid_login "$LOGIN" || { fail "'$LOGIN' is not a GitHub username (letters, digits and dashes)"; exit 1; }
+    env_set MAINTAINER_GITHUB_LOGIN "$LOGIN"
+  fi
+fi
+pass "repo $(env_get KYVERNO_REPO), maintainer $(env_get MAINTAINER_GITHUB_LOGIN)"
+
+# Hermes only fills ${HERMES_SKILL_DIR}-style variables in skills; resolve ours from .env.
+if [ ! -f "$DONE_MARK" ]; then
+  ENV_FILE="$ENV_FILE" python3 - "$PROFILE_DIR" <<'PY'
+import glob, os, sys
+values = {}
+for line in open(os.environ["ENV_FILE"]):
+    line = line.strip()
+    if line and not line.startswith("#") and "=" in line:
+        k, _, v = line.partition("=")
+        values[k.strip()] = v.strip()
+for var in ("KYVERNO_REPO", "MAINTAINER_GITHUB_LOGIN"):
+    val = values.get(var)
+    if not val:
+        continue
+    token = "${" + var + "}"
+    for path in glob.glob(sys.argv[1] + "/skills/*/SKILL.md"):
+        text = open(path).read()
+        if token in text:
+            open(path, "w").write(text.replace(token, val))
+PY
+  touch "$DONE_MARK"
+  pass "skill instructions resolved to your repo and login"
+fi
+
+if [ "${KYVERNO_SETUP_ONLY:-}" = 1 ]; then
+  info "setup only: stopping before sign-in and chat"
+  exit 0
+fi
+
+# --- Model. A provider key held by OpenShell shows up as a placeholder env var; otherwise sign in
+# --- to GitHub Copilot with Hermes' own device-code login, like the Copilot CLI's. ---
+HAS_PROVIDER_KEY=0
+for v in ANTHROPIC_API_KEY OPENAI_API_KEY NVIDIA_API_KEY; do [ -n "${!v:-}" ] && HAS_PROVIDER_KEY=1; done
+
+NEW_LOGIN=0
+if [ "${KYVERNO_SKIP_COPILOT:-}" != 1 ] && [ -z "$(env_get COPILOT_GITHUB_TOKEN)" ] && [ "$HAS_PROVIDER_KEY" = 0 ]; then
+  step "GitHub Copilot sign-in"
+  info "Open the page it prints in your browser on your laptop, enter the code, and approve."
+  info "(To use another model provider instead, quit and start the launcher with --provider anthropic|openai|nvidia.)"
+  # The search library behind the memory plugin prints some harmless lines about CPU details this sandbox hides;
+  # filter those out of the sign-in step (anything else on stderr still shows).
+  if HERMES_HOME="$PROFILE_DIR" "$HERMES_PY" -I - 2> >(grep -v -E 'cpuinfo|onnxruntime' >&2) <<'PY'
+import sys
+sys.path.insert(0, "/opt/hermes")
+import hermes_bootstrap
+from hermes_cli.copilot_auth import copilot_device_code_login
+from hermes_cli.config import save_env_value
+token = copilot_device_code_login()
+if not token:
+    raise SystemExit(1)
+save_env_value("COPILOT_GITHUB_TOKEN", token)
+PY
+  then
+    pass "Copilot signed in"
+    NEW_LOGIN=1
+  else
+    fail "Copilot sign-in did not finish — run kyverno-start again to retry"
+  fi
+fi
+# First time only: pick the model. Later runs keep it, and /model switches inside the chat.
+if [ "$NEW_LOGIN" = 1 ] || { [ "$HAS_PROVIDER_KEY" = 1 ] && [ ! -f "$PROFILE_DIR/.kyverno-model-chosen" ]; }; then
+  step "Model"
+  info "Pick your provider and model."
+  hermes -p "$PROFILE" model && touch "$PROFILE_DIR/.kyverno-model-chosen"
+fi
+
+step "Starting"
+info "The first screen takes about 30 seconds to appear."
+exec hermes -p "$PROFILE" chat "$@"

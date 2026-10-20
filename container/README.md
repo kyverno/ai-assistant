@@ -1,0 +1,32 @@
+# Running the assistant in an OpenShell sandbox
+
+Everything the assistant needs (Hermes, pinned, the maintainer profile and its memory plugin) is in one image
+that runs inside an [OpenShell](https://github.com/NVIDIA/OpenShell) sandbox. You install nothing but Docker.
+
+```bash
+container/kyverno --build                  # first time: build the image from this checkout, then start
+container/kyverno                          # later: reattach to (or start) the sandbox
+container/kyverno --provider anthropic     # also use another model provider (anthropic, openai, nvidia)
+container/kyverno --build --upgrade        # new version: recreate the sandbox, keeping your state
+```
+
+What runs where, how secrets are kept, what the agent can reach, what works today and what doesn't, and
+troubleshooting are all in **[docs/container.md](../docs/container.md)**.
+
+## Files
+
+| File | Purpose |
+|---|---|
+| `Dockerfile` | The image: Hermes pinned by commit, the profile baked in, plus build-time proofs that it works |
+| `setup-profile.sh` | One-time profile setup, run while the image is built |
+| `kyverno-start` | Runs inside the sandbox: your repo and username, the Copilot sign-in, then the chat |
+| `kyverno-main` | The sandbox's main process: runs the dashboard in the background and keeps the sandbox alive |
+| `kyverno` | The launcher you run on your laptop |
+| `restore-state.sh` | Uploaded by the launcher during `--upgrade` to put your state back |
+| `policy.yaml` | The sandbox's filesystem and network policy. Keep the Copilot inference paths listed by name (see docs/container.md, "Safety layers") |
+| `providers/*.yaml` | OpenShell provider profiles: the GitHub token (with the MCP tool allowlist the proxy enforces) and the model-provider keys |
+| `hooks/require-sandbox-terminal.sh` | Lets the terminal run locally, but only inside an OpenShell sandbox |
+
+## Not done yet
+
+Slack, scheduled jobs, and a published multi-architecture image (use `--build` for now).

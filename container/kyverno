@@ -1,0 +1,311 @@
+#!/bin/bash
+# One command to run the Kyverno assistant inside an OpenShell sandbox.
+#
+#   container/kyverno [--image IMAGE | --build] [--name NAME] [--provider P ...] [--upgrade] [--reset]
+#
+# What it does, each time: checks Docker, installs OpenShell if it is missing, registers your GitHub
+# token with OpenShell (asked once, kept outside the sandbox), creates or starts the sandbox, applies
+# its network policy, and opens the assistant in it. Everything else lives in the image.
+#
+#   --build        build the image from this checkout (container/Dockerfile) instead of pulling one
+#   --image IMAGE  use this image (default: $KYVERNO_IMAGE, else ghcr.io/kyverno/ai-assistant:latest)
+#   --name NAME    sandbox name (default: kyverno-assistant)
+#   --provider P   also use model provider P (anthropic, openai or nvidia): its API key is asked once and
+#                  kept in OpenShell like the GitHub token. Without it, the assistant uses GitHub Copilot.
+#   --upgrade      recreate the sandbox from the (new) image and keep your state: memory, chat history,
+#                  repo and username, Copilot sign-in and model choice. Use it with --build or --image.
+#   --no-attach    set everything up but do not open the chat
+#   --reset        forget the stored GitHub token and ask for it again
+set -uo pipefail
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$HERE/.." && pwd)"
+OPENSHELL_VERSION="${OPENSHELL_VERSION:-v0.1.3}"
+IMAGE="${KYVERNO_IMAGE:-ghcr.io/kyverno/ai-assistant:latest}"
+SANDBOX="kyverno-assistant"
+DASH_PORT="${KYVERNO_DASHBOARD_PORT:-9219}"   # not 9119, which a Hermes dashboard on your laptop would use
+PROVIDER="kyverno-repo-github"
+BUILD=0
+RESET=0
+UPGRADE=0
+NO_ATTACH=0
+BACKUP_DIR=""
+WANT_PROVIDERS=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --build) BUILD=1; shift ;;
+    --image) IMAGE="${2:-}"; shift 2 ;;
+    --name) SANDBOX="${2:-}"; shift 2 ;;
+    --provider) WANT_PROVIDERS+=("${2:-}"); shift 2 ;;
+    --upgrade) UPGRADE=1; shift ;;
+    --no-attach) NO_ATTACH=1; shift ;;
+    --reset) RESET=1; shift ;;
+    -h|--help) sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) echo "unknown option: $1 (see --help)" >&2; exit 2 ;;
+  esac
+done
+
+pass() { printf '  \033[32m✓\033[0m %s\n' "$1"; }
+fail() { printf '  \033[31m✗\033[0m %s\n' "$1" >&2; }
+info() { printf '  %s\n' "$1"; }
+step() { printf '\n\033[1m%s\033[0m\n' "$1"; }
+
+# Register a provider profile, or bring an existing one up to date: OpenShell wants the current
+# resource_version for an update, so older installs pick up changes to these files.
+sync_profile() {
+  local file="$1" id="$2" tmp rv
+  if ! openshell profile list --type provider 2>/dev/null | grep -q "$id"; then
+    openshell profile import -f "$file" >/dev/null 2>&1
+    return
+  fi
+  # OpenShell picks the format from the file extension, so the temp file must end in .yaml.
+  tmp="$(mktemp -d)"
+  rv=$(openshell profile export "$id" 2>/dev/null | sed -n 's/^resource_version: *//p' | head -n 1)
+  { printf 'resource_version: %s\n' "${rv:-1}"; cat "$file"; } > "$tmp/profile.yaml"
+  openshell profile update -f "$tmp/profile.yaml" "$id" >/dev/null 2>&1
+  local rc=$?
+  rm -rf "$tmp"
+  return $rc
+}
+
+# --- keeping your state across an image upgrade ---
+# What is yours: memory, chat history, your repo and username, the Copilot sign-in, the model you chose.
+# The profile itself (skills, hooks, plugins, settings) comes from the new image.
+# OpenShell only moves files in and out of the sandbox workspace, /sandbox, so the bundle goes there.
+sandbox_listed() { openshell sandbox list 2>/dev/null | grep -q "^$SANDBOX "; }
+
+save_state() {
+  local dest="$1"
+  # The single quotes are deliberate: this script runs inside the sandbox, so nothing should expand here.
+  # shellcheck disable=SC2016
+  openshell sandbox exec -n "$SANDBOX" --no-tty -- sh -c \
+    'cd /opt/hermes-home/.hermes/profiles/kyverno && tar -cf /sandbox/kyverno-state.tar $(ls -d .env config.yaml .kyverno-model-chosen mnemosyne/data memories sessions kyverno-dashboard state.db state.db-wal state.db-shm 2>/dev/null)' \
+    >/dev/null 2>&1 || return 1
+  openshell sandbox download "$SANDBOX" /sandbox/kyverno-state.tar "$dest/" >/dev/null 2>&1 || return 1
+  [ -s "$dest/kyverno-state.tar" ]
+}
+
+restore_state() {
+  local src="$1"
+  openshell sandbox upload "$SANDBOX" "$src/kyverno-state.tar" /sandbox/ >/dev/null 2>&1 || return 1
+  openshell sandbox upload "$SANDBOX" "$HERE/restore-state.sh" /sandbox/ >/dev/null 2>&1 || return 1
+  openshell sandbox exec -n "$SANDBOX" --no-tty -- bash /sandbox/restore-state.sh
+}
+
+step "1. Docker and OpenShell"
+# OpenShell supports macOS on Apple Silicon and Linux (Windows through WSL2, which shows up here as Linux).
+# KYVERNO_SKIP_PLATFORM_CHECK=1 skips this.
+if [ -z "${KYVERNO_SKIP_PLATFORM_CHECK:-}" ]; then
+  case "$(uname -s)-$(uname -m)" in
+    Darwin-arm64) ;;
+    Darwin-x86_64)
+      fail "this is an Intel Mac, and OpenShell supports macOS on Apple Silicon only"
+      info "(set KYVERNO_SKIP_PLATFORM_CHECK=1 to try anyway)"
+      exit 1 ;;
+    Linux-x86_64|Linux-aarch64)
+      info "Linux: checked end to end on an Ubuntu 24.04 x86_64 CI runner, but not on a real Linux laptop, and not on arm64."
+      info "The kernel needs Landlock (Linux 5.13 or newer); if the sandbox will not start, that is the first thing to check." ;;
+    *)
+      fail "unsupported platform: $(uname -s) $(uname -m) (OpenShell supports Apple Silicon macOS and Linux; on Windows use WSL2)"
+      exit 1 ;;
+  esac
+fi
+if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
+  fail "Docker is not installed or not running — start Docker Desktop (4.60 or newer) and re-run"
+  exit 1
+fi
+# The sandbox needs Landlock, which Docker Desktop only has from 4.60.
+DOCKER_PLATFORM=$(docker version --format '{{.Server.Platform.Name}}' 2>/dev/null)
+DESKTOP_RE='Docker Desktop ([0-9]+)\.([0-9]+)'
+if [[ "$DOCKER_PLATFORM" =~ $DESKTOP_RE ]]; then
+  if [ "${BASH_REMATCH[1]}" -lt 4 ] || { [ "${BASH_REMATCH[1]}" -eq 4 ] && [ "${BASH_REMATCH[2]}" -lt 60 ]; }; then
+    fail "Docker Desktop ${BASH_REMATCH[1]}.${BASH_REMATCH[2]} is older than 4.60 and has no Landlock — update it and re-run"
+    exit 1
+  fi
+fi
+pass "docker is running"
+
+if ! command -v openshell >/dev/null 2>&1; then
+  info "installing OpenShell $OPENSHELL_VERSION (CLI and background gateway)..."
+  curl -LsSf "https://raw.githubusercontent.com/NVIDIA/OpenShell/${OPENSHELL_VERSION}/install.sh" \
+    | OPENSHELL_VERSION="$OPENSHELL_VERSION" sh || { fail "OpenShell install failed"; exit 1; }
+  hash -r
+fi
+# Docker Desktop runs containers in a VM, so a sandbox cannot reach the gateway on the Mac's
+# 127.0.0.1 (OpenShell issue #3880); point it at host.docker.internal. Same fix as scripts/openshell.sh.
+toml="$(brew --prefix 2>/dev/null)/var/openshell/gateway.toml"
+if docker info --format '{{.OperatingSystem}}' 2>/dev/null | grep -qi "docker desktop" && [ -f "$toml" ] \
+   && ! grep -q 'grpc_endpoint' "$toml"; then
+  cp "$toml" "$toml.bak-kyverno"
+  printf '\n[openshell.drivers.docker]\ngrpc_endpoint = "https://host.docker.internal:17670"\n' >> "$toml"
+  brew services restart openshell >/dev/null 2>&1
+  sleep 5
+  pass "gateway pointed at host.docker.internal for Docker Desktop (backup: $toml.bak-kyverno)"
+fi
+openshell status >/dev/null 2>&1 || { fail "the OpenShell gateway is not reachable — run: openshell status"; exit 1; }
+pass "OpenShell $(openshell --version 2>/dev/null | head -n 1)"
+
+step "2. Image"
+if [ "$BUILD" = 1 ]; then
+  IMAGE="kyverno-assistant:dev"
+  info "building $IMAGE from this checkout (the first build takes several minutes)..."
+  docker build -f "$REPO_ROOT/container/Dockerfile" -t "$IMAGE" "$REPO_ROOT" || { fail "image build failed"; exit 1; }
+  if [ "$UPGRADE" != 1 ] && sandbox_listed; then
+    info "note: '$SANDBOX' already exists and keeps running the image it was made from; add --upgrade to switch it to this build"
+  fi
+elif [ "$UPGRADE" = 1 ] || ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
+  info "pulling $IMAGE..."
+  if ! docker pull "$IMAGE"; then
+    # An image that only exists on this machine (built with --build) cannot be pulled; that is fine.
+    if docker image inspect "$IMAGE" >/dev/null 2>&1; then
+      info "could not pull it; using the copy already on this machine"
+    else
+      fail "could not pull $IMAGE — use --build, or --image with an image you have"
+      exit 1
+    fi
+  fi
+fi
+pass "image $IMAGE"
+
+step "3. GitHub token"
+sync_profile "$HERE/providers/repo-github.yaml" "$PROVIDER" \
+  || { fail "could not register the provider profile (container/providers/repo-github.yaml)"; exit 1; }
+if [ "$RESET" = 1 ]; then
+  if openshell sandbox list 2>/dev/null | grep -q "^$SANDBOX "; then
+    fail "the sandbox '$SANDBOX' still uses the stored token — remove it first: openshell sandbox delete $SANDBOX"
+    exit 1
+  fi
+  openshell provider delete "$PROVIDER" >/dev/null 2>&1
+fi
+REPO="${KYVERNO_REPO:-}"
+LOGIN="${MAINTAINER_GITHUB_LOGIN:-}"
+if openshell provider get "$PROVIDER" >/dev/null 2>&1; then
+  pass "GitHub token already stored in OpenShell (use --reset to replace it)"
+else
+  [ -z "$REPO" ] && read -r -p "  Repo to manage (owner/repo) [kyverno/kyverno]: " REPO
+  REPO="${REPO:-kyverno/kyverno}"
+  [[ "$REPO" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9_.-]+$ && "${REPO#*/}" != "." && "${REPO#*/}" != ".." ]] || { fail "'$REPO' is not an owner/repo name (letters, digits, dots, dashes, underscores)"; exit 1; }
+  info "Paste your fine-grained GitHub token (see README step 1). It goes to OpenShell, never into the sandbox."
+  PAT=""
+  { read -r -s -p "  GitHub token: " PAT </dev/tty; } 2>/dev/null
+  echo
+  [ -z "$PAT" ] && { fail "no token entered (this step needs a terminal to ask for it)"; exit 1; }
+  # Check it before storing it. The token goes in through stdin, so it never shows in a process list.
+  CODE=$(printf 'header = "Authorization: Bearer %s"\n' "$PAT" \
+         | curl -s -o /dev/null -w '%{http_code}' -K - "https://api.github.com/repos/$REPO")
+  case "$CODE" in
+    200) pass "GitHub accepts the token for $REPO" ;;
+    401) fail "GitHub rejected the token (401): wrong, expired or revoked"; exit 1 ;;
+    403|404) fail "the token cannot read $REPO ($CODE): scope it to that repo, or get the org to approve it"; exit 1 ;;
+    *) info "could not verify the token (HTTP ${CODE:-none}) — continuing" ;;
+  esac
+  REPO_GITHUB_TOKEN="$PAT" openshell provider create --name "$PROVIDER" --type "$PROVIDER" \
+    --credential REPO_GITHUB_TOKEN >/dev/null 2>&1 || { fail "could not store the token in OpenShell"; exit 1; }
+  unset PAT
+  pass "token stored in OpenShell"
+fi
+
+# Model providers: each key is stored in OpenShell, and the sandbox only holds a placeholder.
+declare_provider_env() {
+  case "$1" in
+    anthropic) echo ANTHROPIC_API_KEY ;;
+    openai) echo OPENAI_API_KEY ;;
+    nvidia) echo NVIDIA_API_KEY ;;
+    *) return 1 ;;
+  esac
+}
+for P in "${WANT_PROVIDERS[@]+"${WANT_PROVIDERS[@]}"}"; do
+  VAR=$(declare_provider_env "$P") || { fail "unknown model provider '$P' (use anthropic, openai or nvidia)"; exit 1; }
+  sync_profile "$HERE/providers/$P.yaml" "kyverno-$P" \
+    || { fail "could not register the $P provider profile"; exit 1; }
+  if openshell provider get "kyverno-$P" >/dev/null 2>&1; then
+    pass "$P key already stored in OpenShell"
+  else
+    KEY=""
+    { read -r -s -p "  $P API key: " KEY </dev/tty; } 2>/dev/null
+    echo
+    [ -z "$KEY" ] && { fail "no $P key entered (this step needs a terminal to ask for it)"; exit 1; }
+    # Exported in a subshell, not passed through env(1): an argument would show in the process list.
+    ( export "$VAR=$KEY"; openshell provider create --name "kyverno-$P" --type "kyverno-$P" --credential "$VAR" >/dev/null 2>&1 ) \
+      || { fail "could not store the $P key in OpenShell"; exit 1; }
+    unset KEY
+    pass "$P key stored in OpenShell"
+  fi
+done
+
+step "4. Sandbox"
+if [ "$UPGRADE" = 1 ] && sandbox_listed; then
+  if openshell sandbox list 2>/dev/null | grep "^$SANDBOX " | grep -q Stopped; then
+    openshell sandbox start "$SANDBOX" >/dev/null 2>&1
+    for _ in $(seq 1 60); do openshell sandbox list 2>/dev/null | awk -v n="$SANDBOX" '$1==n && $NF=="Ready"{f=1} END{exit !f}' && break; sleep 2; done
+  fi
+  BACKUP_DIR="$(mktemp -d)"; chmod 700 "$BACKUP_DIR"
+  info "saving your state from '$SANDBOX' before recreating it..."
+  save_state "$BACKUP_DIR" || { fail "could not save the state, so the sandbox was left alone"; rm -rf "$BACKUP_DIR"; exit 1; }
+  pass "state saved"
+  openshell sandbox delete "$SANDBOX" >/dev/null 2>&1
+  for _ in $(seq 1 60); do sandbox_listed || break; sleep 2; done
+  sandbox_listed && { fail "the old sandbox did not go away; your state is saved in $BACKUP_DIR"; exit 1; }
+fi
+if openshell sandbox list 2>/dev/null | grep -q "^$SANDBOX "; then
+  if openshell sandbox list 2>/dev/null | grep "^$SANDBOX " | grep -q Stopped; then
+    openshell sandbox start "$SANDBOX" >/dev/null 2>&1 && info "started '$SANDBOX'"
+  fi
+else
+  LOG="$(mktemp)"
+  info "creating '$SANDBOX' (the first start can take a few minutes)..."
+  PROVIDER_ARGS=(--provider "$PROVIDER")
+  for P in anthropic openai nvidia; do
+    openshell provider get "kyverno-$P" >/dev/null 2>&1 && PROVIDER_ARGS+=(--provider "kyverno-$P")
+  done
+  openshell sandbox create --name "$SANDBOX" --from "$IMAGE" "${PROVIDER_ARGS[@]}" \
+    --policy "$HERE/policy.yaml" --no-auto-providers -- kyverno-main >"$LOG" 2>&1 &
+fi
+READY=0
+for _ in $(seq 1 150); do
+  if openshell sandbox list 2>/dev/null | awk -v n="$SANDBOX" '$1==n && $NF=="Ready"{f=1} END{exit !f}'; then READY=1; break; fi
+  sleep 2
+done
+if [ "$READY" != 1 ]; then
+  fail "sandbox '$SANDBOX' did not become Ready"
+  openshell sandbox get "$SANDBOX" 2>&1 | head -n 15 | sed 's/^/    /' >&2
+  [ -n "${LOG:-}" ] && [ -s "$LOG" ] && tail -n 15 "$LOG" | sed 's/^/    /' >&2
+  info "to retry from scratch: openshell sandbox delete $SANDBOX, then re-run"
+  exit 1
+fi
+[ -n "${LOG:-}" ] && rm -f "$LOG"
+if openshell policy set --policy "$HERE/policy.yaml" --wait "$SANDBOX" >/dev/null 2>&1; then
+  pass "policy applied"
+else
+  info "could not re-apply the policy; the one from creation stays in force"
+fi
+for P in "${WANT_PROVIDERS[@]+"${WANT_PROVIDERS[@]}"}"; do
+  openshell sandbox provider attach "$SANDBOX" "kyverno-$P" >/dev/null 2>&1
+done
+pass "sandbox '$SANDBOX' is ready"
+
+# The dashboard runs inside the sandbox (started by its main process); forward a port on this laptop to it.
+if openshell sandbox exec -n "$SANDBOX" --no-tty -- pgrep -f "dashboard --isolated" >/dev/null 2>&1; then
+  if ! openshell forward list 2>/dev/null | awk -v n="$SANDBOX" -v p="$DASH_PORT" '$2==n && $4==p{f=1} END{exit !f}'; then
+    openshell forward start "127.0.0.1:$DASH_PORT" "$SANDBOX" -d >/dev/null 2>&1 || info "could not forward port $DASH_PORT (is it in use?); set KYVERNO_DASHBOARD_PORT to another one"
+  fi
+  info "dashboard: http://127.0.0.1:$DASH_PORT/kyverno?profile=kyverno"
+else
+  info "note: this sandbox was made before the dashboard existed; run with --upgrade to get it"
+fi
+if [ -n "$BACKUP_DIR" ]; then
+  info "restoring your state..."
+  if restore_state "$BACKUP_DIR"; then
+    rm -rf "$BACKUP_DIR"; pass "state restored"
+  else
+    fail "could not restore the state; the saved copy is still in $BACKUP_DIR (it holds your Copilot token: delete it when done)"
+    exit 1
+  fi
+fi
+
+step "5. Assistant"
+ARGS=()
+[ -n "$REPO" ] && ARGS+=(--repo "$REPO")
+[ -n "$LOGIN" ] && ARGS+=(--login "$LOGIN")
+[ "$NO_ATTACH" = 1 ] && { pass "ready (not opening the chat: --no-attach)"; exit 0; }
+exec openshell sandbox exec -n "$SANDBOX" --tty -- kyverno-start "${ARGS[@]+"${ARGS[@]}"}"

@@ -1,0 +1,38 @@
+# Lints the sandbox's scripts and Dockerfile on every pull request that touches them. The tools run as
+# containers pinned by digest, so a new release of a linter cannot change the result under us.
+name: container-lint
+
+on:
+  pull_request:
+    paths:
+      - "container/**"
+      - ".github/workflows/container-*.yml"
+  push:
+    branches: [main]
+    paths:
+      - "container/**"
+      - ".github/workflows/container-*.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: shellcheck
+        run: >
+          docker run --rm -v "$PWD":/mnt -w /mnt
+          koalaman/shellcheck@sha256:bb596a0d169b85ddd81d8b6d3a2ff6d5baf5fca10b97f575ebc647c3dff62b3d
+          container/kyverno container/kyverno-start container/kyverno-main container/setup-profile.sh
+          container/restore-state.sh container/hooks/require-sandbox-terminal.sh
+
+      # DL3008 (pin apt package versions) is ignored on purpose: the base image is pinned by digest, and Ubuntu's
+      # archive drops old package versions, so exact apt pins would break the build without making it safer.
+      - name: hadolint
+        run: >
+          docker run --rm -i
+          hadolint/hadolint@sha256:32dac94127fd60b7b7e3fbfc65e1383b9b5e25c9bfd7b8536de7a539fe68a12d
+          hadolint --ignore DL3008 --failure-threshold warning - < container/Dockerfile

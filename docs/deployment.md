@@ -1,5 +1,7 @@
 # Deployment
 
+> **Running in the OpenShell sandbox?** That is now the recommended way, and it has its own instructions: see the [README](../README.md) and [`container.md`](container.md). This runbook covers the host install.
+
 kyverno-assistant is a Hermes profile distribution — there's no server to stand
 up, no webhook receiver, no GitHub App to register. Install flow only.
 
@@ -29,7 +31,7 @@ it just installs the profile and tells you to copy `.env.EXAMPLE` to `.env`
 (`~/.hermes/profiles/kyverno/.env` — separate from this repo, never
 committed) and fill in these yourself:
 
-- `GITHUB_TOKEN` — fine-grained PAT: Contents Read, Pull requests Read & Write,
+- `REPO_GITHUB_TOKEN` — fine-grained PAT: Contents Read, Pull requests Read & Write,
   Issues Read & Write, Checks Read, Code scanning alerts Read, Dependabot
   alerts Read, Secret scanning alerts Read, org Members Read (the last one
   for CODEOWNERS team resolution). Optional: org Projects Read & Write,
@@ -63,7 +65,7 @@ committed) and fill in these yourself:
 - `ANTHROPIC_API_KEY`, `COPILOT_GITHUB_TOKEN` or another provider key — optional.
   The model is chosen in Hermes (`hermes -p kyverno model`, or `/model` in a
   chat), and the installer never changes it. `COPILOT_GITHUB_TOKEN` is separate
-  from `GITHUB_TOKEN`, which stays the repo-scoped PAT for the GitHub tools.
+  from `REPO_GITHUB_TOKEN`, which stays the repo-scoped PAT for the GitHub tools.
 
 ## Run
 

@@ -1,0 +1,19 @@
+# Keeps the things this repo pins by hash moving, as reviewable pull requests. The pins exist so builds are
+# reproducible; Dependabot is how they get updated on purpose, not by accident.
+version: 2
+updates:
+  # The actions in .github/workflows are pinned by commit hash.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "ci"
+
+  # The sandbox image's base image, pinned by digest in container/Dockerfile.
+  - package-ecosystem: docker
+    directory: /container
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "build"

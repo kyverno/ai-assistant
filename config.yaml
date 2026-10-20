@@ -31,10 +31,12 @@ mcp_servers:
   github:
     # GitHub-hosted MCP server. X-MCP-Tools is the server-side allowlist and must list exactly
     # the tools under `tools.include` below (scripts/install.sh checks this): any other tool,
-    # including merge, does not exist for this connection.
+    # including merge, does not exist for this connection. In the sandbox the same list is also enforced by the
+    # OpenShell proxy (container/providers/repo-github.yaml), where the agent cannot edit it; keep the two equal,
+    # the image build fails if they differ.
     url: https://api.githubcopilot.com/mcp/
     headers:
-      Authorization: "Bearer ${GITHUB_TOKEN}"
+      Authorization: "Bearer ${REPO_GITHUB_TOKEN}"
       X-MCP-Tools: "search_pull_requests,pull_request_read,issue_read,search_issues,list_issues,list_label,get_label,get_file_contents,get_repository_tree,search_code,get_team_members,get_teams,list_releases,get_latest_release,list_code_scanning_alerts,get_code_scanning_alert,list_dependabot_alerts,get_dependabot_alert,list_secret_scanning_alerts,get_secret_scanning_alert,actions_list,actions_get,get_job_logs,issue_write,add_issue_comment,update_issue_comment,pull_request_review_write,add_comment_to_pending_review,add_reply_to_pull_request_comment,update_pull_request_branch,request_copilot_review,list_discussion_categories,list_discussions,get_discussion,get_discussion_comments,discussion_comment_write,get_commit,list_commits,list_branches,list_tags,get_tag,get_release_by_tag,search_commits,list_pull_requests,search_repositories,search_users,get_me,check_dependency_vulnerabilities,get_global_security_advisory,list_global_security_advisories,get_code_quality_finding,projects_get,projects_list,repository_ruleset_read,list_issue_types,list_issue_fields,custom_properties_read,list_repository_collaborators,semantic_issue_similarity_search,label_write,sub_issue_write,update_pull_request,projects_write"
     # Verified live: overlapping tools/call requests run concurrently.
     supports_parallel_tool_calls: true
@@ -189,7 +191,7 @@ custom_toolsets:
     # GitHub/Slack access of its own. See docs/architecture.md for the packaging verification.
     - kyverno-sequencer
     # kyverno-fetch: a bundled plugin (plugins/kyverno-fetch/). Registers fetch_pr_candidates —
-    # talks to GitHub's GraphQL API directly with this profile's own GITHUB_TOKEN, replacing
+    # talks to GitHub's GraphQL API directly with this profile's own REPO_GITHUB_TOKEN, replacing
     # N sequential pull_request_read calls with one tool call.
     - kyverno-fetch
     # kyverno-dashboard: a bundled plugin (plugins/kyverno-dashboard/). Registers update_dashboard,

@@ -1,0 +1,176 @@
+# The Kyverno assistant as one OpenShell sandbox image: Hermes (pinned) plus the maintainer profile.
+# Build from the repo root:  docker build -f container/Dockerfile -t kyverno-assistant:dev .
+#
+# Two stages. "build" installs and sets everything up, then removes what the finished image does not need
+# (Python environments that Hermes' installer and plugin installs leave behind, and a download cache). "final"
+# copies only the live files out of it, so those leftovers are in no layer of the image. Deleting files in a later
+# layer would not shrink it, because the earlier layer would still hold them.
+
+# Pinned by digest (the multi-architecture index), so a re-pushed tag cannot change what we build on.
+# Dependabot proposes new digests; see docs/container.md, "Updating dependencies". Both stages use the same one.
+FROM nvcr.io/nvidia/base/ubuntu:24.04@sha256:7e0f726d635d440d28a7f18e6498d3bdb76c7038bd4c90a090c21eb7c9f40686 AS build
+
+# A failure anywhere in a piped command must fail the build (a failed download must not look like success).
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
+ARG HERMES_COMMIT=5307e93252ac655cd13fadbd561c0995142138c6
+
+# libatomic1: the Node that Hermes installs needs it on arm64.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ca-certificates curl git jq less make python3 ripgrep unzip xz-utils libatomic1 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Hermes keeps its install records and dependency venv under HERMES_HOME with absolute paths, so it
+# runs from the directory it was installed into, owned by the sandbox user (uid 1000). The code in
+# /opt/hermes stays root-owned and read-only.
+ENV HOME=/opt/hermes-home
+RUN mkdir -p "$HOME" \
+    && curl -fsSL https://hermes-agent.nousresearch.com/install.sh \
+       | bash -s -- --non-interactive --skip-browser \
+           --dir /opt/hermes --hermes-home /opt/hermes-home/.hermes --commit "${HERMES_COMMIT}" \
+    && chown -R 1000:1000 /opt/hermes-home \
+    && chmod -R a+rX /opt/hermes \
+    && ln -s /opt/hermes-home/.local/bin/hermes /usr/local/bin/hermes
+
+# The profile, baked in and read-only under /opt/kyverno. It is installed into HERMES_HOME below, at build
+# time; the safety hooks are run from here, where the agent cannot edit them.
+COPY SOUL.md config.yaml distribution.yaml .env.example .no-bundled-skills /opt/kyverno/profiles/maintainer/
+COPY hooks   /opt/kyverno/profiles/maintainer/hooks
+COPY plugins /opt/kyverno/profiles/maintainer/plugins
+COPY skills  /opt/kyverno/profiles/maintainer/skills
+COPY cron    /opt/kyverno/profiles/maintainer/cron
+# The terminal runs locally inside the sandbox here, not over ssh into a second one.
+COPY container/hooks/require-sandbox-terminal.sh /opt/kyverno/profiles/maintainer/hooks/require-sandbox-terminal.sh
+RUN chmod 755 /opt/kyverno/profiles/maintainer/hooks/*.sh && chmod -R a+rX /opt/kyverno
+
+# Install the profile and its memory plugin (mnemosyne) now, while the network is open. The sandbox
+# cannot reach PyPI, and at runtime Hermes would stop at a hidden "Prepare these dependencies? [y/N]"
+# prompt. Hermes wants that answer on a terminal, so `script` supplies one. Runs as the sandbox user
+# (uid 1000), so everything it writes into Hermes' home is already writable at runtime.
+USER 1000:1000
+RUN export HERMES_HOME=/opt/hermes-home/.hermes \
+    && hermes profile install /opt/kyverno/profiles/maintainer --name kyverno -y \
+    && printf 'y\n' | script -qec "hermes -p kyverno plugins install mnemosyne --enable" /dev/null \
+    && PLUGINS="$(hermes -p kyverno plugins list 2>&1)" \
+    && printf '%s\n' "$PLUGINS" | grep -q 'mnemosyne.*enabled'
+
+# Model-provider libraries. Hermes installs these on first use by re-resolving its whole dependency lock
+# from PyPI and GitHub, which the sandbox cannot reach. OpenAI, NVIDIA, OpenRouter, Gemini and Copilot use
+# the OpenAI library already in the image; Anthropic has its own, installed below next to the pin. It goes
+# into the existing environment with uv: `hermes pm install --extra anthropic` builds a complete second copy of
+# Hermes' Python environment, which added about 570 MB to the image.
+#
+# Then pin mnemosyne to the versions that work with this Hermes. mnemosyne-hermes 0.7.4 (3 Oct 2026) adds
+# a per-home check that makes the memory provider fail to start ("loaded but no provider instance
+# found"), and the plugin's own ranges (>=0.7.3, >=4.0.0b3) pick it up. The pin goes into whichever
+# environment Hermes is actually running. Remove it when the Hermes pin moves to a version that works with
+# newer mnemosyne.
+#
+# PyJWT is bumped for the same reason: Hermes pins 2.13.0, which has CVE-2026-102268 (authentication bypass via
+# improper public key validation, fixed in 2.14.0). Hermes only verifies JWTs in dashboard sign-in providers this
+# image does not use, so it was probably not reachable, but there is no reason to ship it. Remove the pin when the
+# Hermes pin moves to a version that requires 2.14.0 or newer.
+#
+# The final lines fail the build if either library is not really usable: `anthropic` must import, and
+# mnemosyne must come up as the memory provider (it fails silently otherwise).
+RUN export HERMES_HOME=/opt/hermes-home/.hermes \
+    && PY="$(ls -d /opt/hermes-home/.hermes/tools/python-*/bin/python3 | head -n 1)" \
+    && UV="$(find /opt/hermes-home/.hermes/tools -name uv -type f -print -quit)" \
+    && ACTIVE="$(HERMES_HOME=$HERMES_HOME/profiles/kyverno "$PY" -I -c 'import sys; sys.path.insert(0, "/opt/hermes"); import hermes_bootstrap, mnemosyne_hermes as m; print(m.__file__.split("/lib/python")[0])' | tail -n 1)" \
+    && "$UV" pip install --python "$ACTIVE/bin/python" --prerelease=allow "mnemosyne-hermes==0.7.3" "mnemosyne-memory==4.0.0b3" "anthropic==0.87.0" "PyJWT[crypto]==2.14.0" \
+    && HERMES_HOME=$HERMES_HOME/profiles/kyverno "$PY" -I -c '\
+import sys; sys.path.insert(0, "/opt/hermes"); import hermes_bootstrap, anthropic; \
+from plugins.memory import load_memory_provider; \
+p = load_memory_provider("mnemosyne"); \
+print("anthropic", anthropic.__version__, "| memory provider:", type(p).__name__ if p else None); \
+sys.exit(0 if p else 1)'
+
+# The memory plugin's embedding model (BAAI/bge-small-en-v1.5, the 64 MB quantized ONNX build). Mnemosyne's
+# searches only ever read it from the profile's cache folder (local_files_only); the download happens in a
+# separate first-start path that works on a laptop with internet. The sandbox cannot reach HuggingFace, so
+# without this the first memory lookup stalls for a retry cycle and falls back to a weaker search.
+# Download it now, into that same folder.
+RUN export HERMES_HOME=/opt/hermes-home/.hermes \
+    && PY="$(ls -d /opt/hermes-home/.hermes/tools/python-*/bin/python3 | head -n 1)" \
+    && "$PY" -I -c 'import sys; sys.path.insert(0, "/opt/hermes"); import hermes_bootstrap; from fastembed import TextEmbedding; v = list(TextEmbedding("BAAI/bge-small-en-v1.5", cache_dir="/opt/hermes-home/.hermes/profiles/kyverno/cache/fastembed").embed(["warm up"]))[0]; print("embedding model ready, dimensions:", len(v)); sys.exit(0 if len(v) == 384 else 1)'
+
+# The rest of the one-time profile setup (skills, hook paths, terminal and Slack settings): see the script.
+COPY --chmod=755 container/setup-profile.sh /usr/local/bin/kyverno-setup-profile
+RUN /usr/local/bin/kyverno-setup-profile
+
+# Keep only the Python environment Hermes is running. The installer and each plugin install leave the one they
+# replaced behind (about 0.9 GB here), and `hermes pm gc` treats them as still referenced, so they are removed
+# by hand. They are only history for an in-place repair or rollback, which needs the network; the sandbox has none,
+# and an upgrade is a new image. The package download cache is only used while installing. If anything depended on
+# what is removed, the proofs in the final stage fail the build.
+RUN export HERMES_HOME=/opt/hermes-home/.hermes \
+    && PY="$(ls -d /opt/hermes-home/.hermes/tools/python-*/bin/python3 | head -n 1)" \
+    && ACTIVE_ID="$(HERMES_HOME=$HERMES_HOME/profiles/kyverno "$PY" -I -c 'import sys; sys.path.insert(0, "/opt/hermes"); import hermes_bootstrap, mnemosyne_hermes as m; print(m.__file__.split("/venv/")[0].split("/")[-1])' | tail -n 1)" \
+    && test -n "$ACTIVE_ID" \
+    && for d in /opt/hermes-home/.hermes/installs/*/environments/*; do \
+         if [ "$(basename "$d")" != "$ACTIVE_ID" ]; then echo "removing superseded environment $(basename "$d")"; rm -rf "$d"; fi; \
+       done \
+    && rm -rf /opt/hermes-home/.hermes/cache/uv
+
+
+# ---------------------------------------------------------------------------------------------------------
+FROM nvcr.io/nvidia/base/ubuntu:24.04@sha256:7e0f726d635d440d28a7f18e6498d3bdb76c7038bd4c90a090c21eb7c9f40686 AS final
+
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
+# The tools the agent's own terminal uses, plus libatomic1 for the Node that Hermes ships.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ca-certificates curl git jq less make python3 ripgrep unzip xz-utils libatomic1 \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV HOME=/opt/hermes-home
+# Hermes' code and the profile stay root-owned; Hermes' home belongs to the sandbox user (uid 1000).
+COPY --from=build /opt/hermes /opt/hermes
+COPY --from=build /opt/kyverno /opt/kyverno
+# Only for the build-time check below: the proxy's tool allowlist lives in this profile, outside the sandbox.
+COPY --chown=1000:1000 container/providers/repo-github.yaml /tmp/repo-github.yaml
+COPY --from=build --chown=1000:1000 /opt/hermes-home /opt/hermes-home
+RUN ln -s /opt/hermes-home/.local/bin/hermes /usr/local/bin/hermes
+COPY --chmod=755 container/kyverno-start container/kyverno-main /usr/local/bin/
+
+# The image's final user must stay uid 1000: OpenShell refuses an image whose default user is root.
+USER 1000:1000
+
+# Proof that the finished image works, run on the copied files with NO network: Hermes knows its own version,
+# the agent cannot write to Hermes' code or the safety hooks, the proxy's GitHub tool allowlist equals the one in config.yaml,
+# `anthropic` imports, mnemosyne comes up as the memory provider, and a full memory cycle passes (import two
+# memories, search them, which needs the embedding model read locally, and run a consolidation). If the cleanup
+# above removed something that was needed, or the plugin needs anything from the internet, this fails the build
+# and the output says what. The warm-up data is removed after, so every user starts with an empty memory.
+RUN --network=none export HERMES_HOME=/opt/hermes-home/.hermes \
+    && V="$(hermes --version)" \
+    && echo "$V" \
+    && case "$V" in *unknown*) echo "Hermes cannot tell its own version" >&2; exit 1 ;; esac \
+    && test ! -w /opt/hermes \
+    && test ! -w /opt/kyverno/profiles/maintainer/hooks \
+    && test ! -w /opt/kyverno/profiles/maintainer/hooks/block-dangerous-tools.sh \
+    && PY="$(ls -d /opt/hermes-home/.hermes/tools/python-*/bin/python3 | head -n 1)" \
+    && HERMES_HOME=$HERMES_HOME/profiles/kyverno "$PY" -I -c '\
+import sys; sys.path.insert(0, "/opt/hermes"); import hermes_bootstrap, anthropic; \
+from plugins.memory import load_memory_provider; \
+p = load_memory_provider("mnemosyne"); \
+print("anthropic", anthropic.__version__, "| memory provider:", type(p).__name__ if p else None); \
+sys.exit(0 if p else 1)' \
+    && HERMES_HOME=$HERMES_HOME/profiles/kyverno "$PY" -I -c '\
+import re, sys; \
+cfg = open("/opt/hermes-home/.hermes/profiles/kyverno/config.yaml").read(); \
+want = re.search(r"X-MCP-Tools: \"([^\"]+)\"", cfg).group(1).split(","); \
+prof = open("/tmp/repo-github.yaml").read(); \
+have = [t.strip() for t in re.search(r"any: \[(.*?)\]", prof, re.S).group(1).split(",") if t.strip()]; \
+ok = have == want; \
+print("proxy tool allowlist matches config.yaml:", ok, "(%d tools)" % len(want)); \
+sys.exit(0 if ok else 1)' \
+    && rm -f /tmp/repo-github.yaml \
+    && printf '%s' '{"mnemosyne_export": {"version": "1.3"}, "working_memory": [{"id": "warmup:1", "content": "Kyverno warm-up memory: the review queue is ordered by dependency tier.", "source": "warmup", "timestamp": "2026-01-01T00:00:00", "session_id": "warmup", "importance": 0.9, "scope": "global", "pinned": 1}]}' > /tmp/warmup.json \
+    && hermes -p kyverno mnemosyne import -i /tmp/warmup.json --force \
+    && OUT="$(hermes -p kyverno mnemosyne inspect 'dependency tier review queue' 2>&1)" \
+    && echo "$OUT" \
+    && ! echo "$OUT" | grep -q 'ERROR' \
+    && echo "$OUT" | grep -q 'warm-up memory' \
+    && hermes -p kyverno mnemosyne sleep \
+    && rm -rf /tmp/warmup.json /opt/hermes-home/.hermes/profiles/kyverno/mnemosyne/data

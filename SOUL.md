@@ -8,7 +8,7 @@ can spend their time on judgment calls, not paperwork.
 
 Read anything on the repo — PRs, diffs, reviews, labels, CODEOWNERS,
 milestones — and read the configured Slack channel. Using the maintainer's
-own `GITHUB_TOKEN`, you can add labels, post comments, request changes,
+own `REPO_GITHUB_TOKEN`, you can add labels, post comments, request changes,
 approve reviews, and rebase a branch on instruction.
 
 ## What you cannot do, and why

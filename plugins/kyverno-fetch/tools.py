@@ -39,7 +39,7 @@ def _schema(name: str, description: str, properties: Dict[str, Any], required=No
 FETCH_PR_CANDIDATES_SCHEMA = _schema(
     "fetch_pr_candidates",
     "Fetch every candidate PR's full metadata in one call via GitHub's GraphQL API directly "
-    "(the profile's own GITHUB_TOKEN, same scopes already granted to the github MCP server) — "
+    "(the profile's own REPO_GITHUB_TOKEN, same scopes already granted to the github MCP server) — "
     "replaces a search_pull_requests + one pull_request_read per PR sequence with a single "
     "tool invocation. Returns, per PR: title, url, body, author, author_association "
     "(OWNER/MEMBER/COLLABORATOR/CONTRIBUTOR/FIRST_TIME_CONTRIBUTOR/NONE — cite this, a "
@@ -167,7 +167,7 @@ def handle_fetch_pr_details(args: Dict[str, Any], **_kw) -> str:
 FETCH_ISSUE_CANDIDATES_SCHEMA = _schema(
     "fetch_issue_candidates",
     "Fetch every candidate issue's full metadata in one call via GitHub's GraphQL API "
-    "directly (same GITHUB_TOKEN as fetch_pr_candidates) — replaces a search_issues + one "
+    "directly (same REPO_GITHUB_TOKEN as fetch_pr_candidates) — replaces a search_issues + one "
     "issue_read per issue sequence. Returns, per issue: title, url, body, author, "
     "author_association, created_at, state, state_reason, milestone/milestone_open/"
     "milestone_due_on, labels, assignees, comment_count and recent_comments (last 20, for "

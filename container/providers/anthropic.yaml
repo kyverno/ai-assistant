@@ -1,0 +1,24 @@
+# Model provider key for the Kyverno assistant, held by OpenShell. The sandbox only sees a placeholder in
+# ANTHROPIC_API_KEY; the proxy swaps in the real key on requests to api.anthropic.com, and only from Hermes' Python.
+id: kyverno-anthropic
+display_name: Anthropic (Kyverno assistant)
+description: Anthropic API key for the Kyverno assistant's model, injected by the proxy only
+category: inference
+inference_capable: true
+credentials:
+  - name: api_key
+    description: Anthropic API key
+    env_vars: [ANTHROPIC_API_KEY]
+    required: true
+    auth_style: header
+    header_name: x-api-key
+discovery:
+  credentials: [api_key]
+endpoints:
+  - host: api.anthropic.com
+    port: 443
+    protocol: rest
+    access: read-write
+    enforcement: enforce
+binaries:
+  - /opt/hermes-home/.hermes/tools/python-*/bin/python*
