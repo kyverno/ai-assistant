@@ -4,7 +4,7 @@
 > [README](../README.md) and [`container.md`](container.md). This page is the older route, where Hermes is installed
 > on your own machine and `scripts/install.sh` sets up a profile. It still works, it supports Slack and the dashboard
 > (which the sandbox does not yet), and it needs more of your machine set up correctly: the Hermes CLI, Python with
-> PyYAML, no conflicting `GITHUB_TOKEN`, and so on. The agent also runs with access to your own files and network, which
+> PyYAML, no conflicting `REPO_GITHUB_TOKEN`, and so on. The agent also runs with access to your own files and network, which
 > the sandbox does not allow.
 
 ## Quick start
@@ -99,7 +99,7 @@ skips the prompts and works this way from the start.
 
 | Variable | Required | Purpose |
 |---|---|---|
-| `GITHUB_TOKEN` | yes | Token from step 2 |
+| `REPO_GITHUB_TOKEN` | yes | Token from step 2 |
 | `MAINTAINER_GITHUB_LOGIN` | yes | Your GitHub username |
 | `KYVERNO_REPO` | yes | `owner/repo` the assistant manages (default `kyverno/kyverno`) |
 | `ANTHROPIC_API_KEY`, `COPILOT_GITHUB_TOKEN`, … | no | Optional model keys; Hermes can also sign in to a provider for you (step 5) |

@@ -6,7 +6,7 @@ author: "Suhaani Agarwal"
 license: "MIT"
 
 env_requires:
-  - name: GITHUB_TOKEN
+  - name: REPO_GITHUB_TOKEN
     description: "Fine-grained PAT: Contents Read, Pull requests Read & Write, Issues Read & Write, Checks Read, plus Code scanning alerts Read, Dependabot alerts Read, Secret scanning alerts Read, and org Members Read (for CODEOWNERS team resolution). No merge, no admin, no Contents Write."
     required: true
   - name: MAINTAINER_GITHUB_LOGIN

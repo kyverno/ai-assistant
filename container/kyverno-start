@@ -52,8 +52,7 @@ if [ -z "$HERMES_PY" ] || [ ! -f "$PROFILE_DIR/distribution.yaml" ]; then
   exit 1
 fi
 # REPO_GITHUB_TOKEN holds an opaque placeholder here, never the real token: the proxy swaps it in on
-# requests to GitHub. The profile's config.yaml still says ${GITHUB_TOKEN}, so give it the same value.
-export GITHUB_TOKEN="$REPO_GITHUB_TOKEN"
+# requests to GitHub.
 pass "inside an OpenShell sandbox; GitHub token is a placeholder, the real one stays outside"
 
 # --- helpers on the .env file (plain text, no YAML needed) ---

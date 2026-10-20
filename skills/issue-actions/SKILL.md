@@ -10,7 +10,7 @@ platforms: [linux, macos, windows]
 # issue-actions Skill
 
 Executes the maintainer's decision on an issue `issue-triage` surfaced, or a direct
-instruction — using their own `GITHUB_TOKEN`. `issue_write` carries no labels-only
+instruction — using their own `REPO_GITHUB_TOKEN`. `issue_write` carries no labels-only
 restriction here the way `pr-actions` restricts it for PRs: this skill operates on
 real issues, where `state`/`assignees`/`milestone` are legitimate. That legitimacy
 is also the risk — GitHub shares one number sequence between issues and PRs, and
@@ -34,7 +34,7 @@ Issue first.
   Discussion thread).
 - `mcp-slack`: `conversations_add_message` — only if configured, for a Slack nudge
   or link-back reply.
-- `GITHUB_TOKEN` scoped as in `distribution.yaml` — no merge, admin, or Contents-write;
+- `REPO_GITHUB_TOKEN` scoped as in `distribution.yaml` — no merge, admin, or Contents-write;
   none of this skill's actions need any of those.
 
 ## Quick Reference

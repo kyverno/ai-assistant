@@ -31,7 +31,7 @@ Only worth using when the ranking criterion isn't something a search qualifier
 Dependabot semver/security level, "superseded by a merged PR," and similar relational
 filters are the real cases.
 
-All five use the profile's own `GITHUB_TOKEN` — the same scopes already granted to the
+All five use the profile's own `REPO_GITHUB_TOKEN` — the same scopes already granted to the
 `github` MCP server, no new credential, no MCP server involved for any call.
 
 Ships automatically on `hermes profile install .`, same as `kyverno-sequencer` (see

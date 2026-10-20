@@ -18,7 +18,7 @@ kyverno-assistant is a [Hermes profile distribution](https://hermes-agent.nousre
 - Reads anything on `KYVERNO_REPO`: PRs, diffs, reviews, labels, CODEOWNERS, milestones,
   issues, Discussions, security/Dependabot alerts, Actions logs. Reads the configured Slack
   channel.
-- Using the maintainer's own `GITHUB_TOKEN`: adds labels, posts comments, requests changes,
+- Using the maintainer's own `REPO_GITHUB_TOKEN`: adds labels, posts comments, requests changes,
   approves reviews, updates a PR branch against its base, replies to Discussions.
 - **Cannot merge a PR.** No merge tool exists anywhere in the toolset — enforced in three
   independent layers (below), not a prompt instruction. See `docs/workflow.md`'s "What the
@@ -75,7 +75,7 @@ per-profile under `~/.hermes/profiles/<profile>/plugins/<name>/`.
 - **`kyverno-fetch`** — `fetch_pr_candidates(repo, search_query, limit)` replaces what would
   otherwise be a `search_pull_requests` call plus one sequential `pull_request_read` per PR
   (real cost against a live queue: dozens of PRs, one round trip each). It talks to GitHub's
-  GraphQL/REST APIs directly over `urllib` using the profile's own `GITHUB_TOKEN` — same
+  GraphQL/REST APIs directly over `urllib` using the profile's own `REPO_GITHUB_TOKEN` — same
   scopes already granted to the `github` MCP server, no new credential — and does its search
   pass plus a concurrent (`ThreadPoolExecutor`, max 8) per-PR detail pass inside one tool
   call. Returns per PR: labels, milestone, `author_association`, size, CI state (the PR's own

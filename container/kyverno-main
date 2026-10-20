@@ -6,8 +6,6 @@ set -u
 
 export HERMES_HOME=/opt/hermes-home/.hermes
 export PATH="/opt/hermes-home/.local/bin:$PATH"
-# The profile's config says ${GITHUB_TOKEN}; this is a placeholder here, never the real token.
-export GITHUB_TOKEN="${REPO_GITHUB_TOKEN:-}"
 PORT="${KYVERNO_DASHBOARD_PORT:-9219}"
 
 # --isolated makes the server profile-scoped, which is what makes it find this profile's Kyverno tab.

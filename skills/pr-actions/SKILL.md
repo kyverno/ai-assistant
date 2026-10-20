@@ -10,7 +10,7 @@ platforms: [linux, macos, windows]
 # pr-actions Skill
 
 Takes the actions a maintainer would take on a PR — using their own
-`GITHUB_TOKEN`, never a privileged one — after `pr-queue` has surfaced what
+`REPO_GITHUB_TOKEN`, never a privileged one — after `pr-queue` has surfaced what
 needs doing. Label, comment, request changes, approve, and catch a branch up
 with its base. Cannot merge: no merge tool exists in this profile's toolset
 (see `docs/architecture.md`) — if a task seems to need merging, say so and
@@ -41,7 +41,7 @@ body as a substitute for an actual commit.
 - `list_discussions`, `discussion_comment_write` — a nudge posted as a
   Discussion reply, when a related thread exists.
 - `mnemosyne_remember` — for Defer, below.
-- `GITHUB_TOKEN` scoped as in `distribution.yaml` — no merge, admin, or
+- `REPO_GITHUB_TOKEN` scoped as in `distribution.yaml` — no merge, admin, or
   Contents-write.
 
 ## Quick Reference

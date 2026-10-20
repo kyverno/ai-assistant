@@ -200,9 +200,16 @@ prompt_for() {
   return 0
 }
 
+# Older installs called the repo token GITHUB_TOKEN; keep it working under the new name.
+if [ -z "$(env_get REPO_GITHUB_TOKEN)" ] && [ -n "$(env_get GITHUB_TOKEN)" ]; then
+  env_set REPO_GITHUB_TOKEN "$(env_get GITHUB_TOKEN)"
+  env_set GITHUB_TOKEN ""
+  info "renamed GITHUB_TOKEN to REPO_GITHUB_TOKEN in $ENV_FILE"
+fi
+
 if [ "$INTERACTIVE" = 1 ]; then
   info "Press Enter at any prompt to skip it and fill it in $ENV_FILE yourself."
-  prompt_for GITHUB_TOKEN "GitHub token (fine-grained PAT, see README step 2): " secret
+  prompt_for REPO_GITHUB_TOKEN "GitHub token (fine-grained PAT, see README step 2): " secret
   prompt_for MAINTAINER_GITHUB_LOGIN "Your GitHub username: "
   prompt_for KYVERNO_REPO "Repo to manage (owner/repo): "
 
@@ -246,9 +253,9 @@ fi
 
 pass "all required credentials are filled in ($ENV_FILE)"
 
-# Catch a bad GITHUB_TOKEN now instead of as a 401 from the tools later.
+# Catch a bad REPO_GITHUB_TOKEN now instead of as a 401 from the tools later.
 check_github_token() {
-  GH_TOKEN_VAL="$(env_get GITHUB_TOKEN)" GH_REPO_VAL="$(env_get KYVERNO_REPO)" python3 - <<'PY'
+  GH_TOKEN_VAL="$(env_get REPO_GITHUB_TOKEN)" GH_REPO_VAL="$(env_get KYVERNO_REPO)" python3 - <<'PY'
 import os, re, ssl, urllib.error, urllib.request
 tok = os.environ['GH_TOKEN_VAL']
 repo = os.environ['GH_REPO_VAL'] or 'kyverno/kyverno'
@@ -276,11 +283,11 @@ PY
 }
 TOKEN_STATUS=$(check_github_token)
 case "$TOKEN_STATUS" in
-  ok) pass "GITHUB_TOKEN works for $(env_get KYVERNO_REPO)" ;;
-  http\ 401) fail "GitHub rejected GITHUB_TOKEN (401): it is wrong, expired or revoked — create a new one and fix $ENV_FILE" ;;
-  http\ 403|http\ 404) fail "GITHUB_TOKEN cannot read $(env_get KYVERNO_REPO) (${TOKEN_STATUS#http }): give the fine-grained token access to that repo, or get the org to approve it" ;;
-  malformed*) fail "GITHUB_TOKEN in $ENV_FILE is malformed (${TOKEN_STATUS#malformed: }) — it must be just the one token, no quotes" ;;
-  *) info "could not verify GITHUB_TOKEN (${TOKEN_STATUS:-no answer}) — continuing" ;;
+  ok) pass "REPO_GITHUB_TOKEN works for $(env_get KYVERNO_REPO)" ;;
+  http\ 401) fail "GitHub rejected REPO_GITHUB_TOKEN (401): it is wrong, expired or revoked — create a new one and fix $ENV_FILE" ;;
+  http\ 403|http\ 404) fail "REPO_GITHUB_TOKEN cannot read $(env_get KYVERNO_REPO) (${TOKEN_STATUS#http }): give the fine-grained token access to that repo, or get the org to approve it" ;;
+  malformed*) fail "REPO_GITHUB_TOKEN in $ENV_FILE is malformed (${TOKEN_STATUS#malformed: }) — it must be just the one token, no quotes" ;;
+  *) info "could not verify REPO_GITHUB_TOKEN (${TOKEN_STATUS:-no answer}) — continuing" ;;
 esac
 
 # Hermes' Copilot provider takes the first of these it finds, ahead of anything it would sign in for.
@@ -291,9 +298,8 @@ for v in COPILOT_GITHUB_TOKEN GH_TOKEN GITHUB_TOKEN; do
 done
 
 # GitHub Copilot signs in with a device-code login only, never with a PAT. Hermes picks the first valid
-# token among COPILOT_GITHUB_TOKEN, GH_TOKEN and GITHUB_TOKEN, and the Copilot API rejects PATs; a repo
-# PAT in GITHUB_TOKEN also stops Hermes from offering the login itself. Saving the login's token as
-# COPILOT_GITHUB_TOKEN puts it first, so Copilot never reaches the PAT.
+# token among COPILOT_GITHUB_TOKEN, GH_TOKEN and GITHUB_TOKEN, and the Copilot API rejects PATs. The repo PAT
+# lives in REPO_GITHUB_TOKEN, a name Hermes doesn't look at, so the two never meet.
 #   KYVERNO_COPILOT_LOGIN=yes  sign in (again) without asking, e.g. after the token expired
 #   KYVERNO_COPILOT_LOGIN=no   skip it
 WANT_COPILOT="${KYVERNO_COPILOT_LOGIN:-}"
@@ -375,7 +381,7 @@ with open('$ENV_FILE') as f:
         values[k.strip()] = v.strip()
 
 repo = values.get('KYVERNO_REPO')
-token = values.get('GITHUB_TOKEN')
+token = values.get('REPO_GITHUB_TOKEN')
 
 def api_get(path):
     req = urllib.request.Request(

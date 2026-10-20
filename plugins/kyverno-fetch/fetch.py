@@ -4,7 +4,7 @@ pull_request_read calls.
 Two real network passes per call: a search query to resolve candidate PR numbers (mirrors
 pr-readiness-check.yaml's own lightweight search step), then a detail query per number, run
 concurrently via a thread pool (stdlib `concurrent.futures` — no new dependency). Both talk to
-GitHub's GraphQL API directly with the profile's own GITHUB_TOKEN (same scopes already granted
+GitHub's GraphQL API directly with the profile's own REPO_GITHUB_TOKEN (same scopes already granted
 to the github MCP server) — the model sees one tool call regardless of how many real HTTP
 requests happen inside it.
 """
@@ -37,9 +37,9 @@ class FetchError(RuntimeError):
 
 
 def _token() -> str:
-    token = os.environ.get("GITHUB_TOKEN")
+    token = os.environ.get("REPO_GITHUB_TOKEN")
     if not token:
-        raise FetchError("GITHUB_TOKEN not set in this profile's environment")
+        raise FetchError("REPO_GITHUB_TOKEN not set in this profile's environment")
     return token
 
 
