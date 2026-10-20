@@ -3,7 +3,8 @@
 #
 #   ghcr.io/<owner>/ai-assistant:<tag>      e.g. v1.0.0, and "latest" for release tags
 #
-# Run it by pushing a release tag (v*), or by hand from the Actions tab (publishes the "edge" tag).
+# Run it by pushing a release tag (v*), or by hand from the Actions tab (publishes the "edge" tag). A fixable
+# CRITICAL vulnerability in either image stops the release before the tag and "latest" are created.
 # Each architecture is built on a native runner, not emulated: the build downloads and compiles things
 # for the machine it runs on, and takes about 5 minutes on a GitHub runner.
 #
@@ -82,6 +83,22 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
+      # The gate: nothing is released while the image has a fixable CRITICAL vulnerability. Both architectures are
+      # scanned, as the per-architecture tags pushed above; "latest" and the release tag do not exist yet, so a
+      # failure here leaves the previous release in place. Trivy runs as a container pinned by digest (0.76.0).
+      - name: Scan for critical vulnerabilities
+        env:
+          IMAGE: ${{ needs.build.outputs.image }}
+          TAG: ${{ needs.build.outputs.tag }}
+          TRIVY_USERNAME: ${{ github.actor }}
+          TRIVY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          for arch in amd64 arm64; do
+            docker run --rm -e TRIVY_USERNAME -e TRIVY_PASSWORD \
+              aquasec/trivy@sha256:2416d1f74045b57274df1a340eee6b510cacd73c66a6ccb8da092b117eb7d222 \
+              image --scanners vuln --severity CRITICAL --ignore-unfixed --exit-code 1 "${IMAGE}:${TAG}-${arch}"
+          done
 
       - name: Combine the two architectures into one image
         env:
