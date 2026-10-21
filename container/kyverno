@@ -197,13 +197,13 @@ else
     info "The GitHub CLI (gh) is signed in. Its token usually has broad 'repo' access, wider than the fine-grained token in README step 1."
     info "It goes to OpenShell, never into the sandbox, and the assistant still cannot merge."
     USE_GH=""
-    { read -r -p "  Use the gh token? [y/N]: " USE_GH </dev/tty; } 2>/dev/null
+    read -r -p "  Use the gh token? [y/N]: " USE_GH </dev/tty
     case "$USE_GH" in [yY]*) PAT="$GH_PAT" ;; esac
     unset GH_PAT
   fi
   if [ -z "$PAT" ]; then
     info "Paste your fine-grained GitHub token (see README step 1). It goes to OpenShell, never into the sandbox."
-    { read -r -s -p "  GitHub token: " PAT </dev/tty; } 2>/dev/null
+    read -r -s -p "  GitHub token: " PAT </dev/tty
     echo
   fi
   [ -z "$PAT" ] && { fail "no token entered (this step needs a terminal to ask for it)"; exit 1; }
