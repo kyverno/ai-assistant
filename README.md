@@ -112,9 +112,10 @@ The launcher checks your machine first and says so plainly if it is one it canno
 
 ### 1. Create a GitHub token
 
-> **Already use the GitHub CLI?** If `gh auth login` is done, the launcher offers to use that token and you can
-> skip this step. It has broader access (`repo`) than the token below, so the launcher asks first. It is stored in
-> OpenShell like any other token, and the assistant still cannot merge.
+> **Have the GitHub CLI (`gh`)?** You can skip this step. The launcher asks how to authorize GitHub. Choose **1**
+> and it uses your `gh` sign-in, or opens the browser sign-in (`gh auth login`) if you are not signed in yet. Choose
+> **2** to paste the fine-grained token below instead. The `gh` token has broader access (`repo`) than the
+> fine-grained one. It is stored in OpenShell like any other token, and the assistant still cannot merge.
 
 Create a fine-grained personal access token scoped to the repo you will point the assistant at
 (for example `kyverno/kyverno`):

@@ -192,16 +192,35 @@ else
   REPO="${REPO:-kyverno/kyverno}"
   [[ "$REPO" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9_.-]+$ && "${REPO#*/}" != "." && "${REPO#*/}" != ".." ]] || { fail "'$REPO' is not an owner/repo name (letters, digits, dots, dashes, underscores)"; exit 1; }
   PAT=""
-  # If the GitHub CLI is already signed in, offer its token so nothing has to be created by hand.
-  if command -v gh >/dev/null 2>&1 && GH_PAT=$(gh auth token 2>/dev/null) && [ -n "$GH_PAT" ]; then
-    info "The GitHub CLI (gh) is signed in. Its token usually has broad 'repo' access, wider than the fine-grained token in README step 1."
-    info "It goes to OpenShell, never into the sandbox, and the assistant still cannot merge."
-    USE_GH=""
-    read -r -p "  Use the gh token? [y/N]: " USE_GH </dev/tty
-    case "$USE_GH" in [yY]*) PAT="$GH_PAT" ;; esac
-    unset GH_PAT
+  METHOD=paste
+  if command -v gh >/dev/null 2>&1; then
+    info "How do you want to authorize GitHub?"
+    info "  1) Sign in with GitHub (gh): a browser sign-in, nothing to create. Its token has broad 'repo' access,"
+    info "     wider than the fine-grained token in README step 1. It goes to OpenShell, never into the sandbox,"
+    info "     and the assistant still cannot merge."
+    info "  2) Paste a fine-grained token (README step 1)"
+    CHOICE=""
+    read -r -p "  Choose [1]: " CHOICE </dev/tty
+    case "${CHOICE:-1}" in
+      1) METHOD=gh ;;
+      2) ;;
+      *) fail "'$CHOICE' is not 1 or 2"; exit 1 ;;
+    esac
+  else
+    info "The GitHub CLI (gh) is not installed, so there is no browser sign-in (https://cli.github.com)."
   fi
-  if [ -z "$PAT" ]; then
+  if [ "$METHOD" = gh ]; then
+    PAT=$(gh auth token --hostname github.com 2>/dev/null) || PAT=""
+    if [ -z "$PAT" ]; then
+      info "gh is not signed in. Starting its browser sign-in..."
+      gh auth login --hostname github.com --git-protocol https --web </dev/tty \
+        || { fail "the gh sign-in did not finish (re-run, or choose 2 and paste a token)"; exit 1; }
+      PAT=$(gh auth token --hostname github.com 2>/dev/null) || PAT=""
+      [ -z "$PAT" ] && { fail "gh did not give a token after signing in"; exit 1; }
+    else
+      pass "using your existing gh sign-in"
+    fi
+  else
     info "Paste your fine-grained GitHub token (see README step 1). It goes to OpenShell, never into the sandbox."
     read -r -s -p "  GitHub token: " PAT </dev/tty
     echo
