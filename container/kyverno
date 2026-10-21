@@ -52,18 +52,22 @@ step() { printf '\n\033[1m%s\033[0m\n' "$1"; }
 
 # Register a provider profile, or bring an existing one up to date: OpenShell wants the current
 # resource_version for an update, so older installs pick up changes to these files.
+# The checks read a command's whole output (awk does; `grep -q` stops at the first match) because, with `pipefail`,
+# a command cut off by an early-exiting reader fails the whole check: a profile registered by an earlier run then
+# looked missing, and importing it again failed.
 sync_profile() {
-  local file="$1" id="$2" tmp rv
-  if ! openshell profile list --type provider 2>/dev/null | grep -q "$id"; then
-    openshell profile import -f "$file" >/dev/null 2>&1
-    return
+  local file="$1" id="$2" tmp rv out rc
+  if ! openshell profile list --type provider 2>/dev/null | awk -v i="$id" '$1==i{f=1} END{exit !f}'; then
+    out="$(openshell profile import -f "$file" 2>&1)" && return 0
+    printf '%s\n' "$out" | sed 's/^/    /' >&2
+    return 1
   fi
   # OpenShell picks the format from the file extension, so the temp file must end in .yaml.
   tmp="$(mktemp -d)"
   rv=$(openshell profile export "$id" 2>/dev/null | sed -n 's/^resource_version: *//p' | head -n 1)
   { printf 'resource_version: %s\n' "${rv:-1}"; cat "$file"; } > "$tmp/profile.yaml"
-  openshell profile update -f "$tmp/profile.yaml" "$id" >/dev/null 2>&1
-  local rc=$?
+  out="$(openshell profile update -f "$tmp/profile.yaml" "$id" 2>&1)"; rc=$?
+  [ "$rc" -ne 0 ] && printf '%s\n' "$out" | sed 's/^/    /' >&2
   rm -rf "$tmp"
   return $rc
 }
@@ -72,7 +76,9 @@ sync_profile() {
 # What is yours: memory, chat history, your repo and username, the Copilot sign-in, the model you chose.
 # The profile itself (skills, hooks, plugins, settings) comes from the new image.
 # OpenShell only moves files in and out of the sandbox workspace, /sandbox, so the bundle goes there.
-sandbox_listed() { openshell sandbox list 2>/dev/null | grep -q "^$SANDBOX "; }
+sandbox_row() { openshell sandbox list 2>/dev/null | awk -v n="$SANDBOX" '$1==n'; }
+sandbox_listed() { [ -n "$(sandbox_row)" ]; }
+sandbox_stopped() { [[ "$(sandbox_row)" == *Stopped* ]]; }
 
 save_state() {
   local dest="$1"
@@ -134,7 +140,7 @@ fi
 # Docker Desktop runs containers in a VM, so a sandbox cannot reach the gateway on the Mac's
 # 127.0.0.1 (OpenShell issue #3880); point it at host.docker.internal. Same fix as scripts/openshell.sh.
 toml="$(brew --prefix 2>/dev/null)/var/openshell/gateway.toml"
-if docker info --format '{{.OperatingSystem}}' 2>/dev/null | grep -qi "docker desktop" && [ -f "$toml" ] \
+if [[ "$(docker info --format '{{.OperatingSystem}}' 2>/dev/null)" == *[Dd]ocker\ [Dd]esktop* ]] && [ -f "$toml" ] \
    && ! grep -q 'grpc_endpoint' "$toml"; then
   cp "$toml" "$toml.bak-kyverno"
   printf '\n[openshell.drivers.docker]\ngrpc_endpoint = "https://host.docker.internal:17670"\n' >> "$toml"
@@ -171,7 +177,7 @@ step "3. GitHub token"
 sync_profile "$HERE/providers/repo-github.yaml" "$PROVIDER" \
   || { fail "could not register the provider profile (container/providers/repo-github.yaml)"; exit 1; }
 if [ "$RESET" = 1 ]; then
-  if openshell sandbox list 2>/dev/null | grep -q "^$SANDBOX "; then
+  if sandbox_listed; then
     fail "the sandbox '$SANDBOX' still uses the stored token — remove it first: openshell sandbox delete $SANDBOX"
     exit 1
   fi
@@ -235,7 +241,7 @@ done
 
 step "4. Sandbox"
 if [ "$UPGRADE" = 1 ] && sandbox_listed; then
-  if openshell sandbox list 2>/dev/null | grep "^$SANDBOX " | grep -q Stopped; then
+  if sandbox_stopped; then
     openshell sandbox start "$SANDBOX" >/dev/null 2>&1
     for _ in $(seq 1 60); do openshell sandbox list 2>/dev/null | awk -v n="$SANDBOX" '$1==n && $NF=="Ready"{f=1} END{exit !f}' && break; sleep 2; done
   fi
@@ -247,8 +253,8 @@ if [ "$UPGRADE" = 1 ] && sandbox_listed; then
   for _ in $(seq 1 60); do sandbox_listed || break; sleep 2; done
   sandbox_listed && { fail "the old sandbox did not go away; your state is saved in $BACKUP_DIR"; exit 1; }
 fi
-if openshell sandbox list 2>/dev/null | grep -q "^$SANDBOX "; then
-  if openshell sandbox list 2>/dev/null | grep "^$SANDBOX " | grep -q Stopped; then
+if sandbox_listed; then
+  if sandbox_stopped; then
     openshell sandbox start "$SANDBOX" >/dev/null 2>&1 && info "started '$SANDBOX'"
   fi
 else
