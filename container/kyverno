@@ -192,7 +192,7 @@ else
   REPO="${REPO:-kyverno/kyverno}"
   [[ "$REPO" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9_.-]+$ && "${REPO#*/}" != "." && "${REPO#*/}" != ".." ]] || { fail "'$REPO' is not an owner/repo name (letters, digits, dots, dashes, underscores)"; exit 1; }
   PAT=""
-  METHOD=paste
+  METHOD="paste"
   if command -v gh >/dev/null 2>&1; then
     info "How do you want to authorize GitHub?"
     info "  1) Sign in with GitHub (gh): a browser sign-in, nothing to create. Its token has broad 'repo' access,"
@@ -202,7 +202,7 @@ else
     CHOICE=""
     read -r -p "  Choose [1]: " CHOICE </dev/tty
     case "${CHOICE:-1}" in
-      1) METHOD=gh ;;
+      1) METHOD="gh" ;;
       2) ;;
       *) fail "'$CHOICE' is not 1 or 2"; exit 1 ;;
     esac
