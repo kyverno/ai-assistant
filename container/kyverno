@@ -191,10 +191,21 @@ else
   [ -z "$REPO" ] && read -r -p "  Repo to manage (owner/repo) [kyverno/kyverno]: " REPO
   REPO="${REPO:-kyverno/kyverno}"
   [[ "$REPO" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9_.-]+$ && "${REPO#*/}" != "." && "${REPO#*/}" != ".." ]] || { fail "'$REPO' is not an owner/repo name (letters, digits, dots, dashes, underscores)"; exit 1; }
-  info "Paste your fine-grained GitHub token (see README step 1). It goes to OpenShell, never into the sandbox."
   PAT=""
-  { read -r -s -p "  GitHub token: " PAT </dev/tty; } 2>/dev/null
-  echo
+  # If the GitHub CLI is already signed in, offer its token so nothing has to be created by hand.
+  if command -v gh >/dev/null 2>&1 && GH_PAT=$(gh auth token 2>/dev/null) && [ -n "$GH_PAT" ]; then
+    info "The GitHub CLI (gh) is signed in. Its token usually has broad 'repo' access, wider than the fine-grained token in README step 1."
+    info "It goes to OpenShell, never into the sandbox, and the assistant still cannot merge."
+    USE_GH=""
+    { read -r -p "  Use the gh token? [y/N]: " USE_GH </dev/tty; } 2>/dev/null
+    case "$USE_GH" in [yY]*) PAT="$GH_PAT" ;; esac
+    unset GH_PAT
+  fi
+  if [ -z "$PAT" ]; then
+    info "Paste your fine-grained GitHub token (see README step 1). It goes to OpenShell, never into the sandbox."
+    { read -r -s -p "  GitHub token: " PAT </dev/tty; } 2>/dev/null
+    echo
+  fi
   [ -z "$PAT" ] && { fail "no token entered (this step needs a terminal to ask for it)"; exit 1; }
   # Check it before storing it. The token goes in through stdin, so it never shows in a process list.
   CODE=$(printf 'header = "Authorization: Bearer %s"\n' "$PAT" \
