@@ -146,7 +146,7 @@ Pick one:
 | Option | Command | Time | Notes |
 |---|---|---|---|
 | **Build it yourself** | `container/kyverno --build` | 15 to 30 minutes, once | Works today on any supported machine. Downloads about 5 GB while building. |
-| **Download the published image** | `container/kyverno` | A few minutes | The default once a release is published (see [why](#why-it-is-built-this-way)). It pulls `ghcr.io/kyverno/ai-assistant:latest`. Until the first release is published, use `--build`. |
+| **Download the published image** | `container/kyverno` | A few minutes | The default once a release is published (see [why](#why-it-is-built-this-way)). It pulls `ghcr.io/kyverno/assistant:latest`. Until the first release is published, use `--build`. |
 
 ### 3. Start it
 
