@@ -8,7 +8,7 @@
 # its network policy, and opens the assistant in it. Everything else lives in the image.
 #
 #   --build        build the image from this checkout (container/Dockerfile) instead of pulling one
-#   --image IMAGE  use this image (default: $KYVERNO_IMAGE, else ghcr.io/kyverno/ai-assistant:latest)
+#   --image IMAGE  use this image (default: $KYVERNO_IMAGE, else ghcr.io/kyverno/assistant:latest)
 #   --name NAME    sandbox name (default: kyverno-assistant)
 #   --provider P   also use model provider P (anthropic, openai or nvidia): its API key is asked once and
 #                  kept in OpenShell like the GitHub token. Without it, the assistant uses GitHub Copilot.
@@ -21,7 +21,7 @@ set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$HERE/.." && pwd)"
 OPENSHELL_VERSION="${OPENSHELL_VERSION:-v0.1.3}"
-IMAGE="${KYVERNO_IMAGE:-ghcr.io/kyverno/ai-assistant:latest}"
+IMAGE="${KYVERNO_IMAGE:-ghcr.io/kyverno/assistant:latest}"
 SANDBOX="kyverno-assistant"
 DASH_PORT="${KYVERNO_DASHBOARD_PORT:-9219}"   # not 9119, which a Hermes dashboard on your laptop would use
 PROVIDER="kyverno-repo-github"

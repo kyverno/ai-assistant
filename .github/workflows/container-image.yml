@@ -1,7 +1,7 @@
 # Builds the assistant's sandbox image (container/Dockerfile) for Apple Silicon / arm64 Linux and for
 # Intel / amd64 Linux, and publishes it to the GitHub Container Registry as one multi-architecture image:
 #
-#   ghcr.io/<owner>/ai-assistant:<tag>      e.g. v1.0.0, and "latest" for release tags
+#   ghcr.io/<owner>/assistant:<tag>      e.g. v1.0.0, and "latest" for release tags
 #
 # Run it by pushing a release tag (v*), or by hand from the Actions tab (publishes the "edge" tag). A fixable
 # CRITICAL vulnerability in either image stops the release before the tag and "latest" are created.
@@ -45,7 +45,7 @@ jobs:
         run: |
           owner="${GITHUB_REPOSITORY_OWNER,,}"
           if [ "${GITHUB_REF_TYPE}" = "tag" ]; then tag="${GITHUB_REF_NAME}"; else tag="edge"; fi
-          echo "image=ghcr.io/${owner}/ai-assistant" >> "$GITHUB_OUTPUT"
+          echo "image=ghcr.io/${owner}/assistant" >> "$GITHUB_OUTPUT"
           echo "tag=${tag}" >> "$GITHUB_OUTPUT"
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

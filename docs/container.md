@@ -143,7 +143,7 @@ silently be missing from the other.
 
 Users can always build the image themselves with `container/kyverno --build`. To let them download it instead
 (a few minutes, and identical for everyone), `.github/workflows/container-image.yml` builds it in CI and publishes
-it to the GitHub Container Registry as `ghcr.io/<owner>/ai-assistant`, one multi-architecture image for Apple
+it to the GitHub Container Registry as `ghcr.io/<owner>/assistant`, one multi-architecture image for Apple
 Silicon / arm64 Linux and Intel / amd64 Linux. Each architecture is built on a native runner.
 
 To release: push a tag.
@@ -160,7 +160,7 @@ One-time setup for an org admin:
 2. After the first publish, open the package's settings and make it **public**. New packages are private, and the
    launcher pulls without logging in.
 
-The launcher pulls `ghcr.io/kyverno/ai-assistant:latest` by default. A fork or a different registry can set
+The launcher pulls `ghcr.io/kyverno/assistant:latest` by default. A fork or a different registry can set
 `KYVERNO_IMAGE` or pass `--image`.
 
 Before the manifest is created, the workflow scans both architectures with Trivy and stops if either has a fixable
