@@ -71,6 +71,9 @@ RUN export HERMES_HOME=/opt/hermes-home/.hermes \
 # image does not use, so it was probably not reachable, but there is no reason to ship it. Remove the pin when the
 # Hermes pin moves to a version that requires 2.14.0 or newer.
 #
+# Hermes also pins vulnerable certifi and Pillow releases, and fastembed currently caps Pillow below its fixed
+# release. Install the fixed versions without dependency resolution so those constraints cannot restore them.
+#
 # The final lines fail the build if either library is not really usable: `anthropic` must import, and
 # mnemosyne must come up as the memory provider (it fails silently otherwise).
 RUN export HERMES_HOME=/opt/hermes-home/.hermes \
@@ -78,6 +81,8 @@ RUN export HERMES_HOME=/opt/hermes-home/.hermes \
     && UV="$(find /opt/hermes-home/.hermes/tools -name uv -type f -print -quit)" \
     && ACTIVE="$(HERMES_HOME=$HERMES_HOME/profiles/kyverno "$PY" -I -c 'import sys; sys.path.insert(0, "/opt/hermes"); import hermes_bootstrap, mnemosyne_hermes as m; print(m.__file__.split("/lib/python")[0])' | tail -n 1)" \
     && "$UV" pip install --python "$ACTIVE/bin/python" --prerelease=allow "mnemosyne-hermes==0.7.3" "mnemosyne-memory==4.0.0b3" "anthropic==0.87.0" "PyJWT[crypto]==2.14.0" \
+    && "$UV" pip install --python "$ACTIVE/bin/python" --no-deps "certifi==2026.10.19" "Pillow==13.0.0" \
+    && "$ACTIVE/bin/python" -I -c 'import certifi, PIL; from PIL import Image; image = Image.new("RGB", (2, 2)); assert image.resize((1, 1)).size == (1, 1); assert certifi.__version__ == "2026.10.19"; assert PIL.__version__ == "13.0.0"; print("certifi", certifi.__version__, "| Pillow", PIL.__version__, "| image resize passed")' \
     && HERMES_HOME=$HERMES_HOME/profiles/kyverno "$PY" -I -c '\
 import sys; sys.path.insert(0, "/opt/hermes"); import hermes_bootstrap, anthropic; \
 from plugins.memory import load_memory_provider; \
@@ -97,6 +102,35 @@ RUN export HERMES_HOME=/opt/hermes-home/.hermes \
 # The rest of the one-time profile setup (skills, hook paths, terminal and Slack settings): see the script.
 COPY --chmod=755 container/setup-profile.sh /usr/local/bin/kyverno-setup-profile
 RUN /usr/local/bin/kyverno-setup-profile
+
+# Keep certifi in pip's embedded copies and ensurepip's wheel free of the same vulnerable release.
+RUN export HERMES_HOME=/opt/hermes-home/.hermes \
+    && UV="$(find /opt/hermes-home/.hermes/tools -name uv -type f -print -quit)" \
+    && PY="$(ls -d /opt/hermes-home/.hermes/tools/python-*/bin/python3 | head -n 1)" \
+    && ACTIVE="$(HERMES_HOME=$HERMES_HOME/profiles/kyverno "$PY" -I -c 'import sys; sys.path.insert(0, "/opt/hermes"); import hermes_bootstrap, mnemosyne_hermes as m; print(m.__file__.split("/lib/python")[0])' | tail -n 1)" \
+    && "$UV" pip install --python "$ACTIVE/bin/python" --upgrade "pip==26.2.2" \
+    && for python in /opt/hermes-home/.hermes/tools/python-*/bin/python3 /opt/hermes-home/.local/share/uv/python/cpython-*/bin/python3; do \
+         [ -x "$python" ] || continue; \
+         "$UV" pip install --python "$python" --system --break-system-packages --upgrade "pip==26.2.2"; \
+       done \
+    && mkdir -p /tmp/pip-wheel \
+    && "$ACTIVE/bin/python" -m pip download --no-deps --dest /tmp/pip-wheel "pip==26.2.2" \
+    && for bundledir in /opt/hermes-home/.hermes/tools/python-*/lib/python*/ensurepip/_bundled /opt/hermes-home/.local/share/uv/python/cpython-*/lib/python*/ensurepip/_bundled; do \
+         [ -d "$bundledir" ] || continue; \
+         rm -f "$bundledir"/pip-*.whl; \
+         cp /tmp/pip-wheel/pip-26.2.2-py3-none-any.whl "$bundledir/"; \
+         sed -i 's/^_PIP_VERSION = ".*"/_PIP_VERSION = "26.2.2"/' "${bundledir%/_bundled}/__init__.py"; \
+       done \
+    && rm -rf /tmp/pip-wheel \
+    && for python in "$ACTIVE/bin/python" /opt/hermes-home/.hermes/tools/python-*/bin/python3 /opt/hermes-home/.local/share/uv/python/cpython-*/bin/python3; do \
+         [ -x "$python" ] || continue; \
+         "$python" -I -c 'import pip, pip._vendor.certifi as c; assert pip.__version__ == "26.2.2" and c.__version__ == "2026.10.19"'; \
+       done \
+    && for ensurepip in /opt/hermes-home/.hermes/tools/python-*/lib/python*/ensurepip /opt/hermes-home/.local/share/uv/python/cpython-*/lib/python*/ensurepip; do \
+         [ -d "$ensurepip" ] || continue; \
+         grep -q '^_PIP_VERSION = "26.2.2"$' "$ensurepip/__init__.py"; \
+         test -f "$ensurepip/_bundled/pip-26.2.2-py3-none-any.whl"; \
+       done
 
 # Keep only the Python environment Hermes is running. The installer and each plugin install leave the one they
 # replaced behind (about 0.9 GB here), and `hermes pm gc` treats them as still referenced, so they are removed
@@ -151,10 +185,16 @@ RUN --network=none export HERMES_HOME=/opt/hermes-home/.hermes \
     && test ! -w /opt/kyverno/profiles/maintainer/hooks/block-dangerous-tools.sh \
     && PY="$(ls -d /opt/hermes-home/.hermes/tools/python-*/bin/python3 | head -n 1)" \
     && HERMES_HOME=$HERMES_HOME/profiles/kyverno "$PY" -I -c '\
-import sys; sys.path.insert(0, "/opt/hermes"); import hermes_bootstrap, anthropic; \
+import sys; sys.path.insert(0, "/opt/hermes"); \
+import hermes_bootstrap, anthropic, certifi, PIL, pip; \
+import pip._vendor.certifi as pip_certifi; \
+from PIL import Image; \
+assert certifi.__version__ == "2026.10.19" and pip_certifi.__version__ == "2026.10.19"; \
+assert PIL.__version__ == "13.0.0" and pip.__version__ == "26.2.2"; \
+assert Image.new("RGB", (2, 2)).resize((1, 1)).size == (1, 1); \
 from plugins.memory import load_memory_provider; \
 p = load_memory_provider("mnemosyne"); \
-print("anthropic", anthropic.__version__, "| memory provider:", type(p).__name__ if p else None); \
+print("anthropic", anthropic.__version__, "| certifi", certifi.__version__, "| Pillow", PIL.__version__, "| pip", pip.__version__, "| memory provider:", type(p).__name__ if p else None); \
 sys.exit(0 if p else 1)' \
     && HERMES_HOME=$HERMES_HOME/profiles/kyverno "$PY" -I -c '\
 import re, sys; \
