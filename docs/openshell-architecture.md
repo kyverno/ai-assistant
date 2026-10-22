@@ -449,7 +449,7 @@ Go SDK and HTTP/Envoy server evaluating CEL over `http` requests; v0.4.0, in dev
   The community [openshell-k8s-operator](https://github.com/lensapp/openshell-k8s-operator) adds
   `OpenShellSandbox`, `OpenShellProvider`, `OpenShellPolicy`, `OpenShellWorkspace`,
   `OpenShellProviderProfile` (early development) **[V]**.
-- Namespace `ai-assistant` for gateway, operator, `sandbox-runner`, one sandbox per profile;
+- Namespace `assistant` for gateway, operator, `sandbox-runner`, one sandbox per profile;
   a separate namespace for execution sandboxes with default-deny `NetworkPolicy` and a warm
   pool.
 - `OpenShellWorkspace` volumes hold Hermes state; PolicyReports surface violations to the

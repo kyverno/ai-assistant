@@ -71,8 +71,8 @@ stores your token, creates or starts the sandbox, and opens the chat.
 ## Quick start
 
 ```bash
-git clone https://github.com/kyverno/ai-assistant.git
-cd ai-assistant
+git clone https://github.com/kyverno/assistant.git
+cd assistant
 container/kyverno --build      # first time: builds the image (15 to 30 minutes), then starts it
 ```
 
