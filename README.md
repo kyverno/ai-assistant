@@ -362,6 +362,7 @@ These are not available in the sandbox yet. They work in the [host install](docs
 ## Repository layout
 
 ```
+Makefile                 common lint, image build, scan and run targets (make help)
 container/               the sandbox: Dockerfile, launcher, policy, provider profiles (see container/README.md)
 .github/workflows/       builds and publishes the sandbox image
 distribution.yaml        install manifest: name, version, required env vars
@@ -378,6 +379,21 @@ skills/                  agent skills
 cron/jobs.json           scheduled jobs (installed paused)
 docs/                    design, deployment and usage docs
 ```
+
+## Development automation
+
+Run `make help` to see the available commands. The most useful targets are:
+
+| Command | Purpose |
+|---|---|
+| `make lint` | Run ShellCheck and Hadolint using the same pinned images as CI |
+| `make image` | Build `kyverno-assistant:dev` locally |
+| `make test` | Build the image and run its offline startup, plugin and memory checks |
+| `make scan` | Scan the local image for fixable critical vulnerabilities |
+| `make check` | Run lint and image-build checks |
+| `make run ARGS="--provider anthropic"` | Launch the sandbox using the locally built image |
+
+Override `IMAGE` or `TAG` for a different local image name, for example `make image TAG=debug`.
 
 <details>
 <summary><b>Details</b></summary>
