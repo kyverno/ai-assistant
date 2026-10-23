@@ -29,4 +29,5 @@ troubleshooting are all in **[docs/container.md](../docs/container.md)**.
 
 ## Not done yet
 
-Slack, scheduled jobs, and a published multi-architecture image (use `--build` for now).
+Slack and scheduled jobs are not available inside the sandbox yet. The published multi-architecture image is
+available from `ghcr.io/kyverno/assistant`; use `container/kyverno --build` to build it from a local checkout.
