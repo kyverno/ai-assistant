@@ -10,8 +10,8 @@
 ## Quick start
 
 ```bash
-git clone https://github.com/kyverno/ai-assistant.git
-cd ai-assistant
+git clone https://github.com/kyverno/assistant.git
+cd assistant
 ./scripts/install.sh      # installs, prompts for your credentials, then verifies everything
 kyverno chat
 ```

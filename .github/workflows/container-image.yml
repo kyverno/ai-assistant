@@ -1,10 +1,12 @@
 # Builds the assistant's sandbox image (container/Dockerfile) for Apple Silicon / arm64 Linux and for
 # Intel / amd64 Linux, and publishes it to the GitHub Container Registry as one multi-architecture image:
 #
-#   ghcr.io/<owner>/assistant:<tag>      e.g. v1.0.0, and "latest" for release tags
+#   ghcr.io/<owner>/assistant:<tag>      e.g. v1.2.3, plus the floating tags v1.2, v1 and "latest"
 #
-# Run it by pushing a release tag (v*), or by hand from the Actions tab (publishes the "edge" tag). A fixable
-# CRITICAL vulnerability in either image stops the release before the tag and "latest" are created.
+# Run it by pushing a release tag (vMAJOR.MINOR.PATCH), or by hand from the Actions tab (publishes the "edge"
+# tag). A tag with a suffix (v1.2.3-rc1) is published under its own name only: it does not move v1.2, v1 or
+# "latest". A fixable CRITICAL vulnerability in either image stops the release before any tag is created.
+# The published image is signed (cosign, keyless) and carries a build provenance attestation.
 # Each architecture is built on a native runner, not emulated: the build downloads and compiles things
 # for the machine it runs on, and takes about 5 minutes on a GitHub runner.
 #
@@ -14,7 +16,7 @@ name: container-image
 
 on:
   push:
-    tags: ["v*"]
+    tags: ["v[0-9]+.[0-9]+.[0-9]+*"]
   workflow_dispatch:
 
 permissions:
@@ -75,6 +77,8 @@ jobs:
     permissions:
       contents: read
       packages: write
+      id-token: write       # keyless signing and provenance (OIDC)
+      attestations: write
     steps:
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
@@ -101,12 +105,37 @@ jobs:
           done
 
       - name: Combine the two architectures into one image
+        id: publish
         env:
           IMAGE: ${{ needs.build.outputs.image }}
           TAG: ${{ needs.build.outputs.tag }}
         run: |
           tags=(-t "${IMAGE}:${TAG}")
-          # Only a release tag moves "latest"; a manual run publishes "edge" and leaves it alone.
-          [ "${GITHUB_REF_TYPE}" = "tag" ] && tags+=(-t "${IMAGE}:latest")
+          # Only a stable release tag (vX.Y.Z, no suffix) moves the floating tags; a manual run publishes
+          # "edge" and a pre-release such as v1.2.3-rc1 is published under its own name only.
+          if [ "${GITHUB_REF_TYPE}" = "tag" ] && [[ "${TAG}" =~ ^v([0-9]+)\.([0-9]+)\.[0-9]+$ ]]; then
+            tags+=(-t "${IMAGE}:v${BASH_REMATCH[1]}.${BASH_REMATCH[2]}" -t "${IMAGE}:v${BASH_REMATCH[1]}" -t "${IMAGE}:latest")
+          fi
           docker buildx imagetools create "${tags[@]}" "${IMAGE}:${TAG}-amd64" "${IMAGE}:${TAG}-arm64"
           docker buildx imagetools inspect "${IMAGE}:${TAG}"
+          digest="$(docker buildx imagetools inspect "${IMAGE}:${TAG}" --format '{{json .Manifest}}' | jq -r .digest)"
+          echo "digest=${digest}" >> "$GITHUB_OUTPUT"
+
+      # Signed by digest, so every tag that points at this image is covered. Verify with:
+      #   cosign verify ghcr.io/<owner>/assistant:<tag> \
+      #     --certificate-identity-regexp '^https://github.com/<owner>/assistant/\.github/workflows/container-image\.yml@' \
+      #     --certificate-oidc-issuer https://token.actions.githubusercontent.com
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      - name: Sign the image
+        env:
+          IMAGE: ${{ needs.build.outputs.image }}
+          DIGEST: ${{ steps.publish.outputs.digest }}
+        run: cosign sign --yes "${IMAGE}@${DIGEST}"
+
+      # Verify with: gh attestation verify oci://ghcr.io/<owner>/assistant:<tag> --owner <owner>
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ needs.build.outputs.image }}
+          subject-digest: ${{ steps.publish.outputs.digest }}
+          push-to-registry: true

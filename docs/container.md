@@ -146,13 +146,23 @@ Users can always build the image themselves with `container/kyverno --build`. To
 it to the GitHub Container Registry as `ghcr.io/<owner>/assistant`, one multi-architecture image for Apple
 Silicon / arm64 Linux and Intel / amd64 Linux. Each architecture is built on a native runner.
 
-To release: push a tag.
+To release: push a semantic-version tag.
 
 ```bash
-git tag v1.0.0 && git push origin v1.0.0     # publishes v1.0.0 and moves "latest"
+git tag -s v0.1.0 && git push origin v0.1.0   # publishes v0.1.0, and moves v0.1, v0 and "latest"
 ```
 
-Running the workflow by hand from the Actions tab publishes the `edge` tag and leaves `latest` alone.
+| Tag | Means | Moves when |
+|---|---|---|
+| `v0.1.0` | One exact release; never changes | never |
+| `v0.1` | The newest patch of that minor version | a stable `v0.1.x` is released |
+| `v0` | The newest minor of that major version | a stable `v0.x.y` is released |
+| `latest` | The newest stable release | any stable release |
+| `v0.2.0-rc1` | A pre-release (any tag with a suffix) | never; it does not move the tags above |
+| `edge` | A manual run from the Actions tab | each manual run |
+
+Only tags of the form `vMAJOR.MINOR.PATCH` (optionally with a suffix) start a release. Below `v1.0.0` the project
+is still early, so a minor version may change behaviour.
 
 One-time setup for an org admin:
 
@@ -160,15 +170,31 @@ One-time setup for an org admin:
 2. After the first publish, open the package's settings and make it **public**. New packages are private, and the
    launcher pulls without logging in.
 
-The launcher pulls `ghcr.io/kyverno/assistant:latest` by default. A fork or a different registry can set
-`KYVERNO_IMAGE` or pass `--image`.
+The launcher pulls `ghcr.io/kyverno/assistant:latest` by default. To pin a version, or to use a fork or a different
+registry, set `KYVERNO_IMAGE` or pass `--image`:
+
+```bash
+container/kyverno --image ghcr.io/kyverno/assistant:v0.1.0 --upgrade     # a release
+container/kyverno --image ghcr.io/kyverno/assistant@sha256:<digest>       # exactly this build
+```
 
 Before the manifest is created, the workflow scans both architectures with Trivy and stops if either has a fixable
 CRITICAL vulnerability, so a bad image never gets the release tag or `latest`.
 
-**Not tested yet:** the workflow itself has not been run, so neither the native arm64/amd64 builds nor the scan gate
-have run in Actions. An amd64 image has been built and run on a GitHub runner by hand (see "What works"), but not by
-this workflow.
+Each published image is signed with cosign (keyless: the signature is tied to this workflow's identity, with no key
+to manage) and has a build provenance attestation. To check an image before running it:
+
+```bash
+cosign verify ghcr.io/kyverno/assistant:v0.1.0 \
+  --certificate-identity-regexp '^https://github.com/kyverno/assistant/\.github/workflows/container-image\.yml@' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+
+gh attestation verify oci://ghcr.io/kyverno/assistant:v0.1.0 --owner kyverno
+```
+
+**Not tested yet:** the workflow has run by hand (the `edge` tag, both architectures, with the scan gate), but a tag
+push has not: the release tags, the floating tags, signing and the provenance attestation have never run. They
+were checked with actionlint only. Cut the first release as `v0.1.0` and run both verify commands above.
 
 ## Security notes
 
