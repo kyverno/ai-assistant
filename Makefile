@@ -10,18 +10,22 @@ TRIVY_IMAGE := aquasec/trivy@sha256:2416d1f74045b57274df1a340eee6b510cacd73c66a6
 SHELL_SCRIPTS := container/kyverno container/kyverno-start container/kyverno-main \
 	container/setup-profile.sh container/restore-state.sh container/hooks/require-sandbox-terminal.sh
 
-.PHONY: help lint lint-shell lint-dockerfile image test scan check run
+.PHONY: help lint lint-shell lint-dockerfile lint-providers image test scan check run
 
 help: ## Show available development commands
 	@awk 'BEGIN { FS = ":.*## " } /^[a-zA-Z0-9_-]+:.*## / { printf "  %-18s %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
 
-lint: lint-shell lint-dockerfile ## Run the repository linters
+lint: lint-shell lint-dockerfile lint-providers ## Run the repository linters
 
 lint-shell: ## Lint shell scripts with the pinned ShellCheck image
 	docker run --rm -v "$(CURDIR)":/mnt -w /mnt $(SHELLCHECK_IMAGE) $(SHELL_SCRIPTS)
 
 lint-dockerfile: ## Lint the sandbox Dockerfile with the pinned Hadolint image
 	docker run --rm -i $(HADOLINT_IMAGE) hadolint --ignore DL3008 --failure-threshold warning - < $(DOCKERFILE)
+
+lint-providers: ## Fail if a provider profile allows every path (read-write or full) instead of named ones
+	@! grep -nE '^[[:space:]]*access:[[:space:]]*(read-write|full)' container/providers/*.yaml \
+		|| { echo "provider profiles must list the paths they allow (rules:), not use access: read-write/full"; exit 1; }
 
 image: ## Build the local sandbox image (override IMAGE and TAG as needed)
 	docker build -f $(DOCKERFILE) -t $(IMAGE):$(TAG) .

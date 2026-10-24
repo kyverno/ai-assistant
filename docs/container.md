@@ -125,7 +125,12 @@ silently be missing from the other.
   `model_not_supported`, so only a real request tells you. `gpt-4.1` and `gpt-4o-mini` answered on a free
   account. Switch in chat with `/model gpt-4.1 --global`.
 - **Another provider:** `container/kyverno --provider anthropic` (or `openai`, `nvidia`). The key is
-  asked once and kept in OpenShell.
+  asked once and kept in OpenShell. The proxy adds the real key only on chat and model-list requests
+  (`/v1/chat/completions`, `/v1/responses`, `/v1/messages`, `/v1/models`). Anything else on those hosts is refused,
+  so a prompt-injected command cannot use your key for file uploads, batch jobs or fine-tuning. Hermes features
+  that use other endpoints with the same key (OpenAI speech, transcription or image generation) do not work
+  until the path is added to `container/providers/<provider>.yaml`. `make lint-providers` fails if a provider
+  profile allows every path again.
 
 ## Troubleshooting
 
