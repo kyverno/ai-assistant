@@ -138,6 +138,33 @@ class PR:
 
 
 def pr_from_dict(d: dict) -> PR:
+    raw_closing = d.get("closing_issues")
+    if not isinstance(raw_closing, (list, tuple, set)):
+        raw_closing = [raw_closing] if raw_closing is not None else []
+
+    closing_issues: list[int] = []
+    seen_issues: set[int] = set()
+    for item in raw_closing:
+        if isinstance(item, bool):
+            continue
+        num = None
+        if isinstance(item, dict):
+            val = item.get("number")
+            if not isinstance(val, bool) and val is not None:
+                try:
+                    num = int(val)
+                except (ValueError, TypeError):
+                    pass
+        elif item is not None:
+            try:
+                num = int(item)
+            except (ValueError, TypeError):
+                pass
+
+        if num is not None and num > 0 and num not in seen_issues:
+            seen_issues.add(num)
+            closing_issues.append(num)
+
     return PR(
         number=int(d["number"]),
         changed_files=list(d.get("changed_files") or []),
@@ -145,7 +172,7 @@ def pr_from_dict(d: dict) -> PR:
         base_branch=str(d.get("base_branch") or ""),
         head_branch=str(d.get("head_branch") or ""),
         body=str(d.get("body") or ""),
-        closing_issues=list(d.get("closing_issues") or []),
+        closing_issues=closing_issues,
         dependency_bumps=list(d.get("dependency_bumps") or []),
     )
 
