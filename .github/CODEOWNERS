@@ -1,7 +1,10 @@
+# A review from either owner is required on every PR (the protect-main ruleset requires code owner review).
+# Listing two owners on one line means one approval from either of them is enough.
+
 # Default owners for everything in the repo
-*                       @suhaani-agarwal @JimBugwadia @kyverno/kyverno-core-maintainers
+*                       @suhaani-agarwal @JimBugwadia
 
 # CI, release, and supply-chain configuration
-/.github/               @suhaani-agarwal @JimBugwadia @kyverno/kyverno-core-maintainers
-/container/             @suhaani-agarwal @JimBugwadia @kyverno/kyverno-core-maintainers
-/Makefile               @suhaani-agarwal @JimBugwadia @kyverno/kyverno-core-maintainers
+/.github/               @suhaani-agarwal @JimBugwadia
+/container/             @suhaani-agarwal @JimBugwadia
+/Makefile               @suhaani-agarwal @JimBugwadia
