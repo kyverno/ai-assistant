@@ -41,6 +41,10 @@ _PR_ITEM_SCHEMA = {
                             "description": "Issue numbers (or issue dicts with a 'number' key) "
                             "this PR closes. Two candidates sharing one go to unresolved[] — "
                             "only one can actually close it."},
+        "files_truncated": {"type": "boolean",
+                             "description": "fetch_pr_candidates' files_truncated: changed_files is "
+                             "cut off at the fetch limit. Flags the PR in its warnings, since its "
+                             "classification and overlaps may be incomplete."},
         "dependency_bumps": {"type": "array", "items": {"type": "string"},
                               "description": "Go module paths this PR bumps (Dependabot PRs). "
                               "A github.com/kyverno/api bump counts as a generated-file-input "
